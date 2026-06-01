@@ -1,0 +1,3 @@
+worker/worker.wasm
+host/camunda-task-tx.bin
+host/database_camunda.json
