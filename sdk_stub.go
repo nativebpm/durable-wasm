@@ -54,27 +54,24 @@ func Run(steps ...func() error) int32 {
 
 // === Fluent API Stubs ===
 
-// Workflow represents a stub fluent builder for workflow steps parameterized by state type T.
-type Workflow[T any] struct {
-	statePtr **T
-	steps    []func(*T) error
+// Workflow represents a stub fluent builder for workflow steps.
+type Workflow struct {
+	steps []func() error
 }
 
 // NewWorkflow stub
-func NewWorkflow[T any](statePtr **T) *Workflow[T] {
-	return &Workflow[T]{
-		statePtr: statePtr,
-	}
+func NewWorkflow() *Workflow {
+	return &Workflow{}
 }
 
 // Step stub
-func (w *Workflow[T]) Step(step func(*T) error) *Workflow[T] {
+func (w *Workflow) Step(step func() error) *Workflow {
 	w.steps = append(w.steps, step)
 	return w
 }
 
 // Run stub
-func (w *Workflow[T]) Run() int32 {
+func (w *Workflow) Run() int32 {
 	panic("Run is only supported when executing inside a WebAssembly environment")
 }
 

@@ -52,12 +52,12 @@ var state = &State{
 
 //export run
 func run() int32 {
-	return durable.NewWorkflow(&state).
-		Step((*State).initialize).
-		Step((*State).checkInventory).
-		Step((*State).capturePayment).
-		Step((*State).saveOrderRecord).
-		Step((*State).finalizeProcess).
+	return durable.NewWorkflow().
+		Step(state.initialize).
+		Step(state.checkInventory).
+		Step(state.capturePayment).
+		Step(state.saveOrderRecord).
+		Step(state.finalizeProcess).
 		Run()
 }
 

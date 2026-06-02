@@ -45,12 +45,12 @@ var state = &State{
 
 //export run
 func run() int32 {
-	return durable.NewWorkflow(&state).
-		Step((*State).initialize).
-		Step((*State).downloadParams).
-		Step((*State).performCalculation).
-		Step((*State).saveFinalRecord).
-		Step((*State).finalizeActivity).
+	return durable.NewWorkflow().
+		Step(state.initialize).
+		Step(state.downloadParams).
+		Step(state.performCalculation).
+		Step(state.saveFinalRecord).
+		Step(state.finalizeActivity).
 		Run()
 }
 

@@ -25,12 +25,12 @@ var state = &State{
 
 //export run
 func run() int32 {
-	return durable.NewWorkflow(&state).
-		Step((*State).initialize).
-		Step((*State).downloadDocx).
-		Step((*State).convertToPdf).
-		Step((*State).sendPdfToUser).
-		Step((*State).finalizeWorkflow).
+	return durable.NewWorkflow().
+		Step(state.initialize).
+		Step(state.downloadDocx).
+		Step(state.convertToPdf).
+		Step(state.sendPdfToUser).
+		Step(state.finalizeWorkflow).
 		Run()
 }
 

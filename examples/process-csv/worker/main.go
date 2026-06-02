@@ -36,10 +36,10 @@ var state = &State{
 
 //export run
 func run() int32 {
-	return durable.NewWorkflow(&state).
-		Step((*State).initialize).
-		Step((*State).processCSVStream).
-		Step((*State).finalizeProcess).
+	return durable.NewWorkflow().
+		Step(state.initialize).
+		Step(state.processCSVStream).
+		Step(state.finalizeProcess).
 		Run()
 }
 

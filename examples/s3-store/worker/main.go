@@ -21,10 +21,10 @@ var state = &State{
 
 //export run
 func run() int32 {
-	return durable.NewWorkflow(&state).
-		Step((*State).initialize).
-		Step((*State).processStream).
-		Step((*State).finalizeWorkflow).
+	return durable.NewWorkflow().
+		Step(state.initialize).
+		Step(state.processStream).
+		Step(state.finalizeWorkflow).
 		Run()
 }
 

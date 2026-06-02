@@ -135,40 +135,25 @@ func Run(steps ...func() error) int32 {
 
 // === Fluent API ===
 
-// Workflow represents a fluent builder for workflow steps parameterized by state type T.
-type Workflow[T any] struct {
-	statePtr **T
-	steps    []func(*T) error
+// Workflow represents a fluent builder for workflow steps.
+type Workflow struct {
+	steps []func() error
 }
 
-// NewWorkflow initializes a new fluent workflow builder associated with a state pointer.
-func NewWorkflow[T any](statePtr **T) *Workflow[T] {
-	return &Workflow[T]{
-		statePtr: statePtr,
-	}
+// NewWorkflow initializes a new fluent workflow builder.
+func NewWorkflow() *Workflow {
+	return &Workflow{}
 }
 
-// Step adds a step to the workflow sequence that receives the state instance.
-func (w *Workflow[T]) Step(step func(*T) error) *Workflow[T] {
+// Step adds a single function/step to the workflow sequence.
+func (w *Workflow) Step(step func() error) *Workflow {
 	w.steps = append(w.steps, step)
 	return w
 }
 
-// Run starts the workflow execution by wrapping steps into parameterless functions.
-func (w *Workflow[T]) Run() int32 {
-	if *w.statePtr == nil {
-		println("[SDK ERROR] workflow state is nil at run time")
-		return -1
-	}
-	wrappedSteps := make([]func() error, len(w.steps))
-	for i, step := range w.steps {
-		s := *w.statePtr
-		stepFunc := step
-		wrappedSteps[i] = func() error {
-			return stepFunc(s)
-		}
-	}
-	return Run(wrappedSteps...)
+// Run starts the workflow execution using the registered steps.
+func (w *Workflow) Run() int32 {
+	return Run(w.steps...)
 }
 
 // APICall represents a fluent builder for external host API calls.
