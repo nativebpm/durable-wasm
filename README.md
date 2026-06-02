@@ -7,18 +7,20 @@ A robust, highly-reusable, and lightweight Durable Execution Engine built on Go,
 - **$O(1)$ RAM Stream-first HTTP**: Transfers arbitrary stream data (CSV, files, binary payloads) in 4KB chunks directly into/from WASM linear memory via `io.Pipe`, guaranteeing constant memory usage regardless of payload size.
 - **WASM Sandbox**: Executes custom code inside a secure virtual machine sandbox via `wasmtime-go`.
 - **Simple Reusable API**: Simplifies client imports by exposing all key host interfaces (`Engine`, `Session`, `SnapshotStore`) at the module root level.
+- **Robust Failure Resilience**: Avoids resource leaks with reusable context-aware HTTP connections and explicit Wasmtime store cleanup.
 
 ---
 
 ## Project Structure
-- `host/`: Core Go runner orchestrator.
-  - `durable/`: The core engine code (`engine.go`) implementing snapshotting, execution routines, and streaming.
-- `worker/`: Standard WASM state-machine worker written in TinyGo.
+- `engine.go`: Core execution engine managing execution lifecycles, memory recovery, host-call API triggers, and streaming.
+- `sqlite_store.go`: Implementation of `SnapshotStore` using SQLite (optimized with single-connection serialization and WAL mode).
+- `postgres_store.go`: Implementation of `SnapshotStore` using PostgreSQL.
 - `examples/`: Real-world orchestration use cases:
   - `camunda/`: Service task orchestration using Camunda 7 External Tasks with simulated crash recovery.
   - `temporal/`: Long-running Math/CRM activity run in a simulated Temporal execution environment with checkpointing.
   - `process-csv/`: High-performance CSV processing and mapping using $O(1)$ RAM streaming.
   - `gotenberg-telegram/`: Streams a document from Telegram Bot API, converts it to PDF using Gotenberg, and streams it back.
+  - `durable-s3/`: Baseline local demonstration of memory snapshotting and restoration.
 
 ---
 
@@ -32,7 +34,7 @@ A robust, highly-reusable, and lightweight Durable Execution Engine built on Go,
 ### Running Tests
 To run automated unit tests for the core engine:
 ```bash
-make -C durable-wasm test
+go test -v ./...
 ```
 
 ---
@@ -79,6 +81,7 @@ make -C durable-wasm run-gotenberg-telegram-example
 package main
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
@@ -86,8 +89,12 @@ import (
 )
 
 func main() {
-	// 1. Initialize snapshot store (local files for demo, could be S3, DB, Redis)
-	store := &durable.FileSnapshotStore{Dir: "/tmp/snapshots"}
+	// 1. Initialize snapshot store (using SQLite database)
+	store, err := durable.NewSqliteSnapshotStore("snapshots.db")
+	if err != nil {
+		panic(err)
+	}
+	defer store.Close()
 
 	// 2. Load and compile the TinyGo compiled worker.wasm
 	engine, err := durable.NewEngine("worker.wasm", store)
@@ -97,7 +104,8 @@ func main() {
 
 	// 3. Execute the module. 
 	// If a snapshot exists under "my-session-id", memory is restored automatically.
-	crashed, err := engine.Execute("my-session-id", "run", "localhost:8080", false)
+	ctx := context.Background()
+	crashed, err := engine.Execute(ctx, "my-session-id", "run", "localhost:8080", false)
 	if err != nil {
 		if crashed {
 			fmt.Println("Execution suspended at checkpoint.")
