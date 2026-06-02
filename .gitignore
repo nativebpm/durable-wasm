@@ -8,4 +8,5 @@
 # Compiled binaries
 host
 **/host
+!**/host/
 *.bin
