@@ -1,4 +1,4 @@
-package durable
+package wasman
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bytecodealliance/wasmtime-go/v20"
 	"github.com/google/uuid"
-	"github.com/nativebpm/durable-wasm/testdata"
+	"github.com/nativebpm/wasman/testdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

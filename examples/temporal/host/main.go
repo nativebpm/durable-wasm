@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/nativebpm/durable-wasm"
+	"github.com/nativebpm/wasman"
 	localTemporal "github.com/nativebpm/temporal"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
@@ -56,9 +56,9 @@ func ExecuteDurableWasmActivity(ctx context.Context, instanceID string, serverAd
 	if err := os.MkdirAll(snapshotsDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create snapshots directory: %w", err)
 	}
-	store := &durable.FileSnapshotStore{Dir: snapshotsDir}
+	store := &wasman.FileSnapshotStore{Dir: snapshotsDir}
 
-	engine, err := durable.NewEngine(wasmPath, store)
+	engine, err := wasman.NewEngine(wasmPath, store)
 	if err != nil {
 		return "", fmt.Errorf("failed to initialize engine: %w", err)
 	}
@@ -113,7 +113,7 @@ func main() {
 
 	// 3. Connect to Temporal Server
 	cfg := localTemporal.LoadFromEnv()
-	cfg.TaskQueue = "durable-wasm-temporal-queue"
+	cfg.TaskQueue = "wasman-temporal-queue"
 
 	slog.Info("[HOST] Connecting to Temporal Server...", "host_port", cfg.HostPort, "namespace", cfg.Namespace)
 	c, err := localTemporal.NewClient(cfg)
@@ -136,7 +136,7 @@ func main() {
 	defer w.Stop()
 
 	// 5. Run Temporal Workflow
-	workflowID := "durable-wasm-workflow-" + uuid.New().String()
+	workflowID := "wasman-workflow-" + uuid.New().String()
 	instanceID := "temporal-activity-tx"
 
 	slog.Info("[HOST] Starting Workflow execution", "workflow_id", workflowID)

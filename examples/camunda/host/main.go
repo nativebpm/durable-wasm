@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nativebpm/camunda"
-	"github.com/nativebpm/durable-wasm"
+	"github.com/nativebpm/wasman"
 )
 
 const (
@@ -37,7 +37,7 @@ func main() {
 	time.Sleep(100 * time.Millisecond)
 
 	// 3. Initialize Camunda Client
-	client, err := camunda.NewClient(camundaURL, "durable-wasm-worker")
+	client, err := camunda.NewClient(camundaURL, "wasman-worker")
 	if err != nil {
 		slog.Error("[HOST] Failed to initialize Camunda client", "error", err)
 		os.Exit(1)
@@ -59,9 +59,9 @@ func main() {
 		os.Exit(1)
 	}
 	wasmPath := filepath.Join("..", "worker", "worker.wasm")
-	store := &durable.FileSnapshotStore{Dir: snapshotsDir}
+	store := &wasman.FileSnapshotStore{Dir: snapshotsDir}
 
-	engine, err := durable.NewEngine(wasmPath, store)
+	engine, err := wasman.NewEngine(wasmPath, store)
 	if err != nil {
 		slog.Error("[HOST] Failed to initialize WASM engine", "error", err)
 		os.Exit(1)
@@ -72,8 +72,8 @@ func main() {
 	w.SetMaxTasks(1)
 	w.SetPollInterval(1 * time.Second)
 
-	// Register Task Handler for topic "durable-wasm-task"
-	w.RegisterHandler("durable-wasm-task", camunda.TaskHandlerFunc(
+	// Register Task Handler for topic "wasman-task"
+	w.RegisterHandler("wasman-task", camunda.TaskHandlerFunc(
 		func(ctx context.Context, c *camunda.Client, task camunda.ExternalTask, complete camunda.CompleteFunc, fail camunda.FailFunc) error {
 			businessKey := task.BusinessKey
 			if businessKey == "" {
@@ -179,7 +179,7 @@ func deployProcess(ctx context.Context, client *camunda.Client) error {
 	}
 	defer file.Close()
 
-	deploymentID, err := client.DeployProcess(ctx, "durable-wasm-camunda-deployment", file, file.Name())
+	deploymentID, err := client.DeployProcess(ctx, "wasman-camunda-deployment", file, file.Name())
 	if err != nil {
 		return err
 	}

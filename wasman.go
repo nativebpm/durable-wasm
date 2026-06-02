@@ -1,6 +1,6 @@
 //go:build !wasm
 
-package durable
+package wasman
 
 import (
 	"context"
@@ -18,107 +18,7 @@ import (
 	"unsafe"
 
 	"github.com/bytecodealliance/wasmtime-go/v20"
-	"github.com/nativebpm/httpstream"
 )
-
-var (
-	ErrWasmVersionMismatch = fmt.Errorf("wasm module hash mismatch")
-	ErrConcurrentExecution = fmt.Errorf("concurrent execution detected (OCC fencing)")
-)
-
-// InstanceMeta holds execution metadata for safety checks and OCC.
-type InstanceMeta struct {
-	InstanceID string `json:"instance_id"`
-	WasmHash   string `json:"wasm_hash"`
-	Version    int    `json:"version"`
-	ETag       string `json:"etag,omitempty"`
-}
-
-// OplogEntry represents a single external call log.
-type OplogEntry struct {
-	CallIndex       int    `json:"call_index"`
-	ApiName         string `json:"api_name"`
-	RequestPayload  []byte `json:"request_payload"`
-	ResponsePayload []byte `json:"response_payload"`
-}
-
-// SnapshotStore abstracts the storage backend for linear memory snapshots, deltas, and oplog.
-type SnapshotStore interface {
-	Save(id string, snapshot []byte) error
-	Load(id string) ([]byte, error)
-	Delete(id string) error
-
-	// Delta Snapshots
-	SaveDeltas(id string, deltas map[int][]byte) error
-	LoadDeltas(id string) (map[int][]byte, error)
-	TruncateDeltas(id string) error
-
-	// Oplog
-	SaveOplog(id string, callIndex int, apiName string, request []byte, response []byte) error
-	LoadOplog(id string) ([]OplogEntry, error)
-	TruncateOplog(id string, beforeCallIndex int) error
-
-	// Metadata & OCC
-	SaveMetadata(meta *InstanceMeta) (bool, error)
-	LoadMetadata(id string) (*InstanceMeta, error)
-
-	// WASM Registry for Multi-Version Support
-	SaveWasm(hash string, wasmBytes []byte) error
-	LoadWasm(hash string) ([]byte, error)
-}
-
-// Engine coordinates execution, compilation, and snapshotting of WASM modules.
-type Engine struct {
-	wasmEngine *wasmtime.Engine
-	module     *wasmtime.Module
-	store      SnapshotStore
-	httpClient *http.Client
-	wasmHash   string
-}
-
-// Session tracks the dynamic execution state of a running WASM instance.
-type Session struct {
-	engine                  *Engine
-	ctx                     context.Context
-	store                   *wasmtime.Store
-	memory                  *wasmtime.Memory
-	instanceID              string
-	serverAddr              string
-	shouldCrashOnCheckpoint bool
-	crashed                 bool
-	meta                    *InstanceMeta
-
-	// Dirty-page snapshot hashes and Oplog progress
-	pageHashes map[int]uint64
-	callIndex  int
-
-	// Upload Stream-first context
-	uploadPipeW   *io.PipeWriter
-	uploadErrChan chan error
-
-	// Download Stream-first context
-	downloadResp *http.Response
-	downloadEOF  bool
-}
-
-var defaultHTTPClient = &http.Client{
-	Timeout: 30 * time.Second,
-	Transport: &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
-	},
-}
-
-// EngineOption defines a configuration option for the Engine.
-type EngineOption func(*Engine)
-
-// WithHTTPClient allows configuring a custom HTTP client.
-func WithHTTPClient(client *http.Client) EngineOption {
-	return func(e *Engine) {
-		e.httpClient = client
-	}
-}
 
 // NewEngine creates a new reusable WASM Durable Execution Engine.
 func NewEngine(wasmPath string, store SnapshotStore, opts ...EngineOption) (*Engine, error) {
@@ -158,47 +58,6 @@ func NewEngine(wasmPath string, store SnapshotStore, opts ...EngineOption) (*Eng
 	}
 
 	return engine, nil
-}
-
-// Execution represents a fluent builder for configuring and running a WASM execution session.
-type Execution struct {
-	engine      *Engine
-	instanceID  string
-	entrypoint  string
-	serverAddr  string
-	shouldCrash bool
-}
-
-// Session creates a new Execution builder for the specified WASM instance.
-func (e *Engine) Session(instanceID string) *Execution {
-	return &Execution{
-		engine:     e,
-		instanceID: instanceID,
-		entrypoint: "run", // Default entrypoint function in WASM
-	}
-}
-
-// WithEntrypoint configures the function name to call in WASM (default is "run").
-func (ex *Execution) WithEntrypoint(entrypoint string) *Execution {
-	ex.entrypoint = entrypoint
-	return ex
-}
-
-// WithServer configures the server address for HTTP upload/download routing.
-func (ex *Execution) WithServer(serverAddr string) *Execution {
-	ex.serverAddr = serverAddr
-	return ex
-}
-
-// WithCrash configures whether to simulate a host crash at the first checkpoint.
-func (ex *Execution) WithCrash(shouldCrash bool) *Execution {
-	ex.shouldCrash = shouldCrash
-	return ex
-}
-
-// Run executes the WASM instance with the configured session options.
-func (ex *Execution) Run(ctx context.Context) (crashed bool, err error) {
-	return ex.engine.Execute(ctx, ex.instanceID, ex.entrypoint, ex.serverAddr, ex.shouldCrash)
 }
 
 // nolint:gocyclo
@@ -295,6 +154,7 @@ func (e *Engine) Execute(ctx context.Context, instanceID string, entrypoint stri
 			return wasmtime.NewTrap("memory export not found")
 		}
 		mem := ext.Memory()
+		session.memory = mem
 
 		// Read and snapshot the linear memory safely using unsafe.Slice
 		ptr := mem.Data(store)
@@ -637,117 +497,4 @@ func (e *Engine) Execute(ctx context.Context, instanceID string, entrypoint stri
 	}
 
 	return false, nil
-}
-
-func (s *Session) handleDownload(ptr int32, length int32) int32 {
-	if s.downloadEOF {
-		return 0
-	}
-
-	mPtr := s.memory.Data(s.store)
-	mSize := s.memory.DataSize(s.store)
-	memoryBytes := unsafe.Slice((*byte)(mPtr), mSize)
-
-	// Validate bounds before copy
-	if ptr < 0 || length < 0 || int(ptr)+int(length) > len(memoryBytes) {
-		slog.Error("[ENGINE] Memory access out of bounds in handleDownload", "ptr", ptr, "length", length, "mem_size", len(memoryBytes))
-		return -1
-	}
-
-	if s.downloadResp == nil {
-		url := fmt.Sprintf("http://%s/download", s.serverAddr)
-		slog.Info("[ENGINE] GET Request (Stream-first)", "url", url)
-		resp, err := httpstream.NewRequest(s.ctx, *s.engine.httpClient, "GET", url).Send()
-		if err != nil {
-			slog.Error("[ENGINE] GET failed", "error", err)
-			return -1
-		}
-		s.downloadResp = resp
-	}
-
-	buf := make([]byte, length)
-	n, err := s.downloadResp.Body.Read(buf)
-	if n > 0 {
-		copy(memoryBytes[ptr:ptr+int32(n)], buf[:n])
-	}
-
-	if err == io.EOF {
-		slog.Info("[ENGINE] GET Stream EOF. Closing response")
-		s.downloadResp.Body.Close()
-		s.downloadResp = nil
-		s.downloadEOF = true
-		return int32(n)
-	}
-
-	if err != nil {
-		slog.Error("[ENGINE] Read failed", "error", err)
-		s.downloadResp.Body.Close()
-		s.downloadResp = nil
-		return -1
-	}
-
-	return int32(n)
-}
-
-func (s *Session) handleUpload(ptr int32, length int32) int32 {
-	mPtr := s.memory.Data(s.store)
-	mSize := s.memory.DataSize(s.store)
-	memoryBytes := unsafe.Slice((*byte)(mPtr), mSize)
-
-	// Validate bounds before access
-	if ptr < 0 || length < 0 || int(ptr)+int(length) > len(memoryBytes) {
-		slog.Error("[ENGINE] Memory access out of bounds in handleUpload", "ptr", ptr, "length", length, "mem_size", len(memoryBytes))
-		return -1
-	}
-
-	if s.uploadPipeW == nil {
-		url := fmt.Sprintf("http://%s/upload", s.serverAddr)
-		slog.Info("[ENGINE] POST Request (Stream-first via io.Pipe)", "url", url)
-
-		pipeReader, pipeWriter := io.Pipe()
-		s.uploadPipeW = pipeWriter
-		s.uploadErrChan = make(chan error, 1)
-
-		go func() {
-			resp, err := httpstream.NewRequest(s.ctx, *s.engine.httpClient, "POST", url).
-				Body(pipeReader, "application/octet-stream").
-				Send()
-			if err != nil {
-				pipeReader.CloseWithError(err)
-				s.uploadErrChan <- err
-				return
-			}
-			defer resp.Body.Close()
-
-			_, _ = io.Copy(io.Discard, resp.Body)
-			s.uploadErrChan <- nil
-		}()
-	}
-
-	if length == 0 {
-		slog.Info("[ENGINE] Closing upload stream (EOF). Waiting for response")
-		s.uploadPipeW.Close()
-		err := <-s.uploadErrChan
-		s.uploadPipeW = nil
-
-		// Reset download stream state to allow next download requests
-		s.downloadResp = nil
-		s.downloadEOF = false
-
-		if err != nil {
-			slog.Error("[ENGINE] POST failed", "error", err)
-			return -1
-		}
-		slog.Info("[ENGINE] POST completed successfully")
-		return 0
-	}
-
-	dataToWrite := memoryBytes[ptr : ptr+length]
-	n, err := s.uploadPipeW.Write(dataToWrite)
-	if err != nil {
-		slog.Error("[ENGINE] Write to pipe failed", "error", err)
-		return -1
-	}
-
-	return int32(n)
 }

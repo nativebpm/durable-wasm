@@ -1,4 +1,4 @@
-# Durable WebAssembly (WASM) Execution Engine
+# Wasman: Durable WebAssembly (WASM) Execution Engine
 
 Надежный, легко переиспользуемый и производительный движок устойчивого выполнения (Durable Execution) на языке Go с использованием WebAssembly (WASM) и среды выполнения Wasmtime. Он обеспечивает отказоустойчивое исполнение бизнес-логики в изолированной песочнице с автоматическим сохранением снимков памяти (snapshotting), прозрачным восстановлением после сбоев и эффективным по памяти потоковым обменом данными.
 
@@ -12,9 +12,12 @@
 ---
 
 ## Структура проекта
-- `engine.go`: Ядро движка выполнения, управляющее жизненным циклом запусков, восстановлением памяти, вызовами хост-функций API и сетевым стримингом.
+- `wasman.go`: Инициализация, компиляция и основной цикл выполнения WASM.
+- `types.go`: Базовые структуры, интерфейсы, конфигурация и ошибки.
+- `execution.go`: Fluent API для построения и запуска сессий выполнения.
+- `session.go`: Потоковый ввод-вывод для загрузки/выгрузки данных.
 - `s3_store.go`: Реализация интерфейса `SnapshotStore` на базе S3-совместимых объектных хранилищ (с поддержкой OCC через ETag).
-- `FileSnapshotStore` (определен в `fs_store.go`): Реализация `SnapshotStore` с использованием локальной файловой системы (идеально для локальной разработки и отладки).
+- `fs_store.go`: Реализация `SnapshotStore` с использованием локальной файловой системы (идеально для локальной разработки и отладки).
 - `examples/`: Реальные примеры оркестрации бизнес-процессов:
   - `camunda/`: Оркестрация внешних задач (External Tasks) в Camunda 7 с симуляцией восстановления после сбоев.
   - `temporal/`: Долгоиграющая активность (Activity) в симулированном окружении Temporal.io с чекпоинтами.
@@ -44,7 +47,7 @@ go test -v ./...
 ### 1. Простая демонстрация стриминга и сбоев (обработка CSV)
 Запускает хост-оркестратор с использованием мок-серверов. Выполняет воркер, симулирует сбой, сохраняет снимок памяти в локальные файлы, перезапускается, восстанавливает память и доводит выполнение до конца.
 ```bash
-make -C durable-wasm run
+make -C wasman run
 ```
 
 ### 2. Интеграция с Camunda 7 External Tasks
@@ -52,31 +55,31 @@ make -C durable-wasm run
 1. Убедитесь, что ваш контейнер Camunda 7 запущен на порту `8080`.
 2. Запустите пример:
 ```bash
-make -C durable-wasm run-camunda-example
+make -C wasman run-camunda-example
 ```
 
 ### 3. Демонстрация чекпоинтов в Temporal Activity
 Запускает воркер Temporal, демонстрируя пошаговое выполнение, отправку Heartbeats и продолжение выполнения с последнего сохраненного чекпоинта после сбоев.
 ```bash
-make -C durable-wasm run-temporal-example
+make -C wasman run-temporal-example
 ```
 
 ### 4. Конвейер обработки CSV в JSON ($O(1)$ RAM)
 Потоково скачивает CSV-файл, валидирует и парсит строки в WASM, преобразует их в JSON и потоково отправляет результат обратно на API.
 ```bash
-make -C durable-wasm run-csv-example
+make -C wasman run-csv-example
 ```
 
 ### 5. Конвертация документов (Gotenberg и Telegram Bot API)
 Потоково считывает DOCX-шаблон из Telegram, заполняет его данными, отправляет на конвертацию в PDF в Gotenberg и загружает готовый файл обратно в чат Telegram.
 ```bash
-make -C durable-wasm run-gotenberg-telegram-example
+make -C wasman run-gotenberg-telegram-example
 ```
 
 ### 6. Демонстрация прямого подключения к S3
 Запускает базовый пример создания снимков памяти и сохранения WASM-модулей напрямую в S3/MinIO.
 ```bash
-make -C durable-wasm run-s3-store-example
+make -C wasman run-s3-store-example
 ```
 
 ---
@@ -91,15 +94,15 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/nativebpm/durable-wasm"
+	"github.com/nativebpm/wasman"
 )
 func main() {
 	// 1. Инициализируем хранилище снимков (используем File или S3-совместимое хранилище)
-	// store, err := durable.NewS3SnapshotStore(ctx, "my-bucket")
-	store := &durable.FileSnapshotStore{Dir: "snapshots"}
+	// store, err := wasman.NewS3SnapshotStore(ctx, "my-bucket")
+	store := &wasman.FileSnapshotStore{Dir: "snapshots"}
 
 	// 2. Загружаем и компилируем WASM-воркер, собранный через TinyGo
-	engine, err := durable.NewEngine("worker.wasm", store)
+	engine, err := wasman.NewEngine("worker.wasm", store)
 	if err != nil {
 		panic(err)
 	}

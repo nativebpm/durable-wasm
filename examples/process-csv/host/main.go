@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/nativebpm/durable-wasm"
+	"github.com/nativebpm/wasman"
 )
 
 const (
@@ -36,12 +36,12 @@ func main() {
 		slog.Error("[HOST] Failed to create snapshots directory", "error", err)
 		os.Exit(1)
 	}
-	store := &durable.FileSnapshotStore{Dir: snapshotsDir}
+	store := &wasman.FileSnapshotStore{Dir: snapshotsDir}
 
 	// Clear any leftover snapshot from previous runs in the database
 	_ = store.Delete(instanceID)
 
-	engine, err := durable.NewEngine(wasmPath, store)
+	engine, err := wasman.NewEngine(wasmPath, store)
 	if err != nil {
 		slog.Error("[HOST] Failed to initialize engine", "error", err)
 		slog.Error("[HOST] Make sure worker.wasm is compiled by running 'make build'")

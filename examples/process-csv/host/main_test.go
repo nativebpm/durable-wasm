@@ -8,7 +8,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/nativebpm/durable-wasm"
+	"github.com/nativebpm/wasman"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,12 +63,12 @@ func TestCSVProcessPipeline_Success_With_Retry(t *testing.T) {
 	_ = os.RemoveAll("snapshots_test")
 	err := os.MkdirAll("snapshots_test", 0755)
 	require.NoError(t, err)
-	store := &durable.FileSnapshotStore{Dir: "snapshots_test"}
+	store := &wasman.FileSnapshotStore{Dir: "snapshots_test"}
 	defer os.RemoveAll("snapshots_test")
 
 	// 4. Initialize Durable WASM Engine
 	wasmPath := "../worker/worker.wasm"
-	engine, err := durable.NewEngine(wasmPath, store)
+	engine, err := wasman.NewEngine(wasmPath, store)
 	require.NoError(t, err)
 
 	// 5. RUN 1: Execute with simulated crash

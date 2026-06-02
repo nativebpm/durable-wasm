@@ -1,6 +1,6 @@
 //go:build !wasm
 
-package durable
+package wasman
 
 import (
 	"encoding/json"

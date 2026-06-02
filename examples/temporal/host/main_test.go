@@ -32,7 +32,7 @@ func TestDurableWasmWorkflow_RealTemporalServer(t *testing.T) {
 
 	// 3. Connect to real Temporal Server
 	cfg := localTemporal.LoadFromEnv()
-	cfg.TaskQueue = "durable-wasm-test-queue-" + uuid.New().String()
+	cfg.TaskQueue = "wasman-test-queue-" + uuid.New().String()
 
 	c, err := localTemporal.NewClient(cfg)
 	require.NoError(t, err, "Temporal server must be running on %s", cfg.HostPort)
@@ -48,7 +48,7 @@ func TestDurableWasmWorkflow_RealTemporalServer(t *testing.T) {
 	defer w.Stop()
 
 	// 5. Run Workflow
-	workflowID := "durable-wasm-test-workflow-" + uuid.New().String()
+	workflowID := "wasman-test-workflow-" + uuid.New().String()
 	instanceID := "temporal-test-activity-tx-" + uuid.New().String()
 
 	run, err := c.ExecuteWorkflow(context.Background(), client.StartWorkflowOptions{

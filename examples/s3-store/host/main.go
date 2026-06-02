@@ -12,7 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/nativebpm/durable-wasm"
+	"github.com/nativebpm/wasman"
 )
 
 const (
@@ -26,7 +26,7 @@ func main() {
 	// 1. Read S3 configuration from environment or use local MinIO defaults
 	bucket := os.Getenv("S3_BUCKET")
 	if bucket == "" {
-		bucket = "durable-wasm-demo"
+		bucket = "wasman-demo"
 	}
 	endpoint := os.Getenv("S3_ENDPOINT")
 	if endpoint == "" {
@@ -45,7 +45,7 @@ func main() {
 
 	// 2. Initialize S3 snapshot store
 	slog.Info("[HOST] Connecting to S3/MinIO", "endpoint", endpoint, "bucket", bucket)
-	store, err := durable.NewS3SnapshotStore(ctx, bucket, func(o *s3.Options) {
+	store, err := wasman.NewS3SnapshotStore(ctx, bucket, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(endpoint)
 		o.Region = "us-east-1"
 		o.UsePathStyle = true
@@ -81,7 +81,7 @@ func main() {
 	// Clear any leftover snapshot from previous runs
 	_ = store.Delete(instanceID)
 
-	engine, err := durable.NewEngine(wasmPath, store)
+	engine, err := wasman.NewEngine(wasmPath, store)
 	if err != nil {
 		slog.Error("[HOST] Failed to initialize engine", "error", err)
 		slog.Error("[HOST] Make sure worker.wasm is compiled by running 'make build-worker'")

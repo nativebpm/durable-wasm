@@ -1,4 +1,4 @@
-package durable
+package wasman
 
 import (
 	"crypto/rand"

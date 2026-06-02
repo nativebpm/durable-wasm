@@ -1,4 +1,4 @@
-module github.com/nativebpm/durable-wasm
+module github.com/nativebpm/wasman
 
 go 1.26
 

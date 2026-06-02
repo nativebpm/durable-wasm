@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/nativebpm/durable-wasm"
+	"github.com/nativebpm/wasman"
 )
 
 // State holds the workflow state.
@@ -21,7 +21,7 @@ var state = &State{
 
 //export run
 func run() int32 {
-	return durable.NewWorkflow().
+	return wasman.NewWorkflow().
 		Step(state.initialize).
 		Step(state.processStream).
 		Step(state.finalizeWorkflow).
@@ -44,7 +44,7 @@ func (s *State) processStream() error {
 
 	for {
 		// Read chunk from host input stream
-		n, err := durable.Reader.Read(buf)
+		n, err := wasman.Reader.Read(buf)
 		if err == io.EOF {
 			println("[WASM WORKER] Stream EOF. All data received.")
 			break
@@ -61,7 +61,7 @@ func (s *State) processStream() error {
 		}
 
 		// Write transformed chunk back to host output stream
-		wn, err := durable.Writer.Write(buf[:n])
+		wn, err := wasman.Writer.Write(buf[:n])
 		if err != nil {
 			return fmt.Errorf("failed to write to network stream: %w", err)
 		}
@@ -73,7 +73,7 @@ func (s *State) processStream() error {
 	}
 
 	// Signal EOF on output stream
-	return durable.Writer.Close()
+	return wasman.Writer.Close()
 }
 
 func (s *State) finalizeWorkflow() error {

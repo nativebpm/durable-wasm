@@ -1,6 +1,6 @@
 //go:build !wasm
 
-package durable
+package wasman
 
 import (
 	"errors"
@@ -9,7 +9,7 @@ import (
 )
 
 // Stub error for non-WASM execution
-var errOnlySupportedInWASM = errors.New("durable-wasm sdk is only supported when compiling for WebAssembly (wasm)")
+var errOnlySupportedInWASM = errors.New("wasman sdk is only supported when compiling for WebAssembly (wasm)")
 
 // Checkpoint stub
 func Checkpoint() {}

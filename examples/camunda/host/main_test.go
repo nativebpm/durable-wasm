@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nativebpm/camunda"
-	"github.com/nativebpm/durable-wasm"
+	"github.com/nativebpm/wasman"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,7 +31,7 @@ func TestCamundaWasmOrchestration_RealCamundaServer(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// 3. Initialize Camunda Client pointed to real Camunda server
-	client, err := camunda.NewClient(camundaURL, "durable-wasm-worker")
+	client, err := camunda.NewClient(camundaURL, "wasman-worker")
 	require.NoError(t, err, "Camunda server must be running on %s", camundaURL)
 
 	// 4. Deploy the BPMN process definition to Camunda
@@ -46,10 +46,10 @@ func TestCamundaWasmOrchestration_RealCamundaServer(t *testing.T) {
 	_ = os.RemoveAll("snapshots_test")
 	err = os.MkdirAll("snapshots_test", 0755)
 	require.NoError(t, err)
-	store := &durable.FileSnapshotStore{Dir: "snapshots_test"}
+	store := &wasman.FileSnapshotStore{Dir: "snapshots_test"}
 	defer os.RemoveAll("snapshots_test")
 
-	engine, err := durable.NewEngine(wasmPath, store)
+	engine, err := wasman.NewEngine(wasmPath, store)
 	require.NoError(t, err)
 
 	// 6. Create Camunda Worker
@@ -58,10 +58,10 @@ func TestCamundaWasmOrchestration_RealCamundaServer(t *testing.T) {
 	w.SetPollInterval(100 * time.Millisecond)
 	w.SetAsyncResponseTimeout(0) // Disable long polling for fast test execution
 
-	// Register Task Handler for topic "durable-wasm-task"
+	// Register Task Handler for topic "wasman-task"
 	uniqueKey := "order-test-" + uuid.NewString()
 
-	w.RegisterHandler("durable-wasm-task", camunda.TaskHandlerFunc(
+	w.RegisterHandler("wasman-task", camunda.TaskHandlerFunc(
 		func(ctx context.Context, c *camunda.Client, task camunda.ExternalTask, complete camunda.CompleteFunc, fail camunda.FailFunc) error {
 
 			// Only process our specific test instance task
