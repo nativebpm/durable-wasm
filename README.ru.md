@@ -107,7 +107,11 @@ func main() {
 	// 3. Выполняем логику модуля.
 	// Если в БД уже есть снимок с ID "my-session-id", состояние памяти восстановится автоматически.
 	ctx := context.Background()
-	crashed, err := engine.Execute(ctx, "my-session-id", "run", "localhost:8080", false)
+	crashed, err := engine.Session("my-session-id").
+		WithEntrypoint("run").
+		WithServer("localhost:8080").
+		WithCrash(false).
+		Run(ctx)
 	if err != nil {
 		if crashed {
 			fmt.Println("Выполнение приостановлено на контрольной точке (checkpoint).")

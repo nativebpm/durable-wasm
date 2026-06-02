@@ -78,7 +78,10 @@ func TestGotenbergTelegramPipeline_Success_With_Retry(t *testing.T) {
 	require.NoError(t, err)
 
 	// 5. RUN 1: Execute with simulated crash
-	crashed, err := engine.Execute(context.Background(), instanceID, "run", srvAddr, true)
+	crashed, err := engine.Session(instanceID).
+		WithServer(srvAddr).
+		WithCrash(true).
+		Run(context.Background())
 	require.Error(t, err)
 	assert.True(t, crashed, "First run should crash")
 
@@ -88,7 +91,10 @@ func TestGotenbergTelegramPipeline_Success_With_Retry(t *testing.T) {
 	assert.NotEmpty(t, snapshot)
 
 	// 6. RUN 2: Restore from snapshot
-	crashed, err = engine.Execute(context.Background(), instanceID, "run", srvAddr, false)
+	crashed, err = engine.Session(instanceID).
+		WithServer(srvAddr).
+		WithCrash(false).
+		Run(context.Background())
 	require.NoError(t, err)
 	assert.False(t, crashed)
 

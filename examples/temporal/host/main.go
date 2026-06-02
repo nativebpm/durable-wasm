@@ -73,7 +73,10 @@ func ExecuteDurableWasmActivity(ctx context.Context, instanceID string, serverAd
 		slog.Info("[HOST ACTIVITY] Attempt 2: Resuming WASM worker from snapshot")
 	}
 
-	crashed, err := engine.Execute(ctx, instanceID, "run", serverAddr, simulateCrash)
+	crashed, err := engine.Session(instanceID).
+		WithServer(serverAddr).
+		WithCrash(simulateCrash).
+		Run(ctx)
 	if err != nil {
 		if crashed {
 			slog.Info("[HOST ACTIVITY] WASM worker suspended/crashed as expected", "error", err)

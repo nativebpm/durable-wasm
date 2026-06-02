@@ -250,7 +250,10 @@ func TestDurableExecutionLifecycle(t *testing.T) {
 	require.NoError(t, err, "Failed to compile WASM module. Make sure worker.wasm is built.")
 
 	// 4. RUN 1: Execute with simulated crash
-	crashed, err := engine.Execute(context.Background(), instanceID, "run", serverAddr, true)
+	crashed, err := engine.Session(instanceID).
+		WithServer(serverAddr).
+		WithCrash(true).
+		Run(context.Background())
 	require.Error(t, err)
 	assert.True(t, crashed, "Expected run 1 to crash at checkpoint")
 
@@ -260,7 +263,10 @@ func TestDurableExecutionLifecycle(t *testing.T) {
 	assert.NotEmpty(t, snapshot, "Snapshot data should not be empty")
 
 	// 5. RUN 2: Restore from checkpoint and run to completion
-	crashed, err = engine.Execute(context.Background(), instanceID, "run", serverAddr, false)
+	crashed, err = engine.Session(instanceID).
+		WithServer(serverAddr).
+		WithCrash(false).
+		Run(context.Background())
 	require.NoError(t, err, "Run 2 should complete without errors")
 	assert.False(t, crashed, "Run 2 should not crash")
 
@@ -286,7 +292,11 @@ func TestDirtyPageAndOplog(t *testing.T) {
 	require.NoError(t, err)
 
 	// RUN 1: Run and crash on first checkpoint
-	crashed, err := engine.Execute(context.Background(), instanceID, "run_test", "localhost:0", true)
+	crashed, err := engine.Session(instanceID).
+		WithEntrypoint("run_test").
+		WithServer("localhost:0").
+		WithCrash(true).
+		Run(context.Background())
 	require.Error(t, err)
 	assert.True(t, crashed)
 
@@ -303,7 +313,11 @@ func TestDirtyPageAndOplog(t *testing.T) {
 	assert.Equal(t, "resp_for_hello_call_1", string(oplog[0].ResponsePayload))
 
 	// RUN 2: Resume, should replay first api call without crash, modify page 2, and complete second checkpoint without crash
-	crashed, err = engine.Execute(context.Background(), instanceID, "run_test", "localhost:0", false)
+	crashed, err = engine.Session(instanceID).
+		WithEntrypoint("run_test").
+		WithServer("localhost:0").
+		WithCrash(false).
+		Run(context.Background())
 	require.NoError(t, err)
 	assert.False(t, crashed)
 
@@ -471,7 +485,11 @@ func TestHostGetTime(t *testing.T) {
 	require.NoError(t, err)
 
 	// RUN 1: Run and crash on first checkpoint
-	crashed, err := engine.Execute(context.Background(), instanceID, "run_test", "localhost:0", true)
+	crashed, err := engine.Session(instanceID).
+		WithEntrypoint("run_test").
+		WithServer("localhost:0").
+		WithCrash(true).
+		Run(context.Background())
 	require.Error(t, err)
 	assert.True(t, crashed)
 
@@ -489,7 +507,11 @@ func TestHostGetTime(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// RUN 2: Resume, it should replay time 1 from Oplog (same value) and record time 2 (new value)
-	crashed, err = engine.Execute(context.Background(), instanceID, "run_test", "localhost:0", false)
+	crashed, err = engine.Session(instanceID).
+		WithEntrypoint("run_test").
+		WithServer("localhost:0").
+		WithCrash(false).
+		Run(context.Background())
 	require.NoError(t, err)
 	assert.False(t, crashed)
 
@@ -525,7 +547,11 @@ func TestMultiCheckpointRecovery(t *testing.T) {
 	// We will run and crash on checkpoints 1, 2, 3, 4 sequentially, verifying version increment
 	for expectedVal := 10; expectedVal <= 50; expectedVal += 10 {
 		shouldCrash := expectedVal < 50
-		crashed, err := engine.Execute(context.Background(), instanceID, "run_test", "localhost:0", shouldCrash)
+		crashed, err := engine.Session(instanceID).
+			WithEntrypoint("run_test").
+			WithServer("localhost:0").
+			WithCrash(shouldCrash).
+			Run(context.Background())
 		if shouldCrash {
 			require.Error(t, err)
 			assert.True(t, crashed)
@@ -577,7 +603,11 @@ func TestWasmModuleHashMismatch(t *testing.T) {
 	engine1, err := NewEngine(wasmPath1, store)
 	require.NoError(t, err)
 
-	crashed, err := engine1.Execute(context.Background(), instanceID, "run_test", "localhost:0", true)
+	crashed, err := engine1.Session(instanceID).
+		WithEntrypoint("run_test").
+		WithServer("localhost:0").
+		WithCrash(true).
+		Run(context.Background())
 	require.Error(t, err)
 	assert.True(t, crashed)
 
@@ -595,7 +625,11 @@ func TestWasmModuleHashMismatch(t *testing.T) {
 	engine2, err := NewEngine(wasmPath2, store)
 	require.NoError(t, err)
 
-	_, err = engine2.Execute(context.Background(), instanceID, "run_test", "localhost:0", false)
+	_, err = engine2.Session(instanceID).
+		WithEntrypoint("run_test").
+		WithServer("localhost:0").
+		WithCrash(false).
+		Run(context.Background())
 	assert.ErrorIs(t, err, ErrWasmVersionMismatch)
 }
 
@@ -644,13 +678,21 @@ func TestConcurrentExecution(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// 1. First run, crash at 1st checkpoint (version becomes 1 in db)
-	crashed, err := engine.Execute(context.Background(), instanceID, "run_test", serverAddr, true)
+	crashed, err := engine.Session(instanceID).
+		WithEntrypoint("run_test").
+		WithServer(serverAddr).
+		WithCrash(true).
+		Run(context.Background())
 	require.Error(t, err)
 	assert.True(t, crashed)
 
 	// 2. Try to resume. It will restore memory, call trigger_race (which pushes version to 11 in DB),
 	// and then attempt checkpoint 2. Local version is still 1, but DB is 11, so it must abort with ErrConcurrentExecution.
-	_, err = engine.Execute(context.Background(), instanceID, "run_test", serverAddr, false)
+	_, err = engine.Session(instanceID).
+		WithEntrypoint("run_test").
+		WithServer(serverAddr).
+		WithCrash(false).
+		Run(context.Background())
 	assert.ErrorIs(t, err, ErrConcurrentExecution)
 }
 
@@ -674,7 +716,11 @@ func TestOplogTruncation(t *testing.T) {
 	var crashed bool
 	for i := 0; i < 4; i++ {
 		var execErr error
-		crashed, execErr = engine.Execute(context.Background(), instanceID, "run_test", "localhost:0", true)
+		crashed, execErr = engine.Session(instanceID).
+			WithEntrypoint("run_test").
+			WithServer("localhost:0").
+			WithCrash(true).
+			Run(context.Background())
 		require.Error(t, execErr)
 		assert.True(t, crashed)
 	}
@@ -685,7 +731,11 @@ func TestOplogTruncation(t *testing.T) {
 	assert.Len(t, oplog, 4)
 
 	// Run again and crash on checkpoint 5 (version 5, which triggers full snapshot and truncation, then crashes)
-	crashed, err = engine.Execute(context.Background(), instanceID, "run_test", "localhost:0", true)
+	crashed, err = engine.Session(instanceID).
+		WithEntrypoint("run_test").
+		WithServer("localhost:0").
+		WithCrash(true).
+		Run(context.Background())
 	require.Error(t, err)
 	assert.True(t, crashed)
 
@@ -728,7 +778,11 @@ func TestMultiVersionWasmExecution(t *testing.T) {
 	engine1, err := NewEngine(wasmPath1, store)
 	require.NoError(t, err)
 
-	crashed, err := engine1.Execute(context.Background(), instanceID, "run_test", "localhost:0", true)
+	crashed, err := engine1.Session(instanceID).
+		WithEntrypoint("run_test").
+		WithServer("localhost:0").
+		WithCrash(true).
+		Run(context.Background())
 	require.Error(t, err)
 	assert.True(t, crashed)
 
@@ -737,7 +791,11 @@ func TestMultiVersionWasmExecution(t *testing.T) {
 	engine2, err := NewEngine(wasmPath2, store)
 	require.NoError(t, err)
 
-	crashed, err = engine2.Execute(context.Background(), instanceID, "run_test", "localhost:0", false)
+	crashed, err = engine2.Session(instanceID).
+		WithEntrypoint("run_test").
+		WithServer("localhost:0").
+		WithCrash(false).
+		Run(context.Background())
 	require.NoError(t, err)
 	assert.False(t, crashed)
 
@@ -801,7 +859,11 @@ func TestExecuteCancellation(t *testing.T) {
 
 	errChan := make(chan error, 1)
 	go func() {
-		_, err := engine.Execute(ctx, instanceID, "run_test", serverAddr, false)
+		_, err := engine.Session(instanceID).
+			WithEntrypoint("run_test").
+			WithServer(serverAddr).
+			WithCrash(false).
+			Run(ctx)
 		errChan <- err
 	}()
 
@@ -860,14 +922,22 @@ func TestStorageErrorInjection(t *testing.T) {
 
 	// Case 1: Injected metadata error during checkpoint
 	store.injectMetaErr = true
-	_, err = engine.Execute(context.Background(), instanceID, "run_test", "localhost:0", false)
+	_, err = engine.Session(instanceID).
+		WithEntrypoint("run_test").
+		WithServer("localhost:0").
+		WithCrash(false).
+		Run(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to save metadata")
 
 	// Case 2: Injected snapshot error during checkpoint
 	store.injectMetaErr = false
 	store.injectSaveErr = true
-	_, err = engine.Execute(context.Background(), instanceID, "run_test", "localhost:0", false)
+	_, err = engine.Session(instanceID).
+		WithEntrypoint("run_test").
+		WithServer("localhost:0").
+		WithCrash(false).
+		Run(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to write snapshot")
 }
@@ -897,7 +967,11 @@ func TestSoakStressTesting(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
 				instanceID := "stress-instance-" + strconv.Itoa(workerID) + "-" + strconv.Itoa(j)
-				_, err := engine.Execute(context.Background(), instanceID, "run_test", "localhost:0", false)
+				_, err := engine.Session(instanceID).
+					WithEntrypoint("run_test").
+					WithServer("localhost:0").
+					WithCrash(false).
+					Run(context.Background())
 				if err != nil {
 					t.Errorf("Stress run failed: %v", err)
 				}

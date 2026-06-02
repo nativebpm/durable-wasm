@@ -50,7 +50,10 @@ func main() {
 
 	// 3. RUN 1: Execute with simulated crash on the first checkpoint (Step 0)
 	slog.Info("[HOST] RUN 1: Executing WASM CSV pipeline with simulated crash")
-	crashed, err := engine.Execute(context.Background(), instanceID, "run", serverAddr, true)
+	crashed, err := engine.Session(instanceID).
+		WithServer(serverAddr).
+		WithCrash(true).
+		Run(context.Background())
 	if err != nil {
 		if crashed {
 			slog.Info("[HOST] Execution successfully suspended/crashed", "error", err)
@@ -70,7 +73,10 @@ func main() {
 
 	// 4. RUN 2: Restore from checkpoint and resume CSV processing to completion
 	slog.Info("[HOST] RUN 2: Restoring from snapshot and processing CSV stream")
-	crashed, err = engine.Execute(context.Background(), instanceID, "run", serverAddr, false)
+	crashed, err = engine.Session(instanceID).
+		WithServer(serverAddr).
+		WithCrash(false).
+		Run(context.Background())
 	if err != nil {
 		slog.Error("[HOST] Resumed execution failed", "error", err)
 		os.Exit(1)

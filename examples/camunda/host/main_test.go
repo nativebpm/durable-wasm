@@ -74,7 +74,10 @@ func TestCamundaWasmOrchestration_RealCamundaServer(t *testing.T) {
 
 			shouldCrash := !hasSnapshot
 
-			crashed, err := engine.Execute(ctx, uniqueKey, "run", serverAddr, shouldCrash)
+			crashed, err := engine.Session(uniqueKey).
+				WithServer(serverAddr).
+				WithCrash(shouldCrash).
+				Run(ctx)
 			if err != nil {
 				if crashed {
 					slog.Info("[WORKER HANDLER] Reporting task failure to Camunda...", "task_id", task.ID)
