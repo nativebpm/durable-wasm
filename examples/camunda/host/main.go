@@ -94,7 +94,7 @@ func main() {
 				shouldCrash = false
 			}
 
-			crashed, err := engine.Execute(businessKey, "run", serverAddr, shouldCrash)
+			crashed, err := engine.Execute(ctx, businessKey, "run", serverAddr, shouldCrash)
 			if err != nil {
 				if crashed {
 					slog.Warn("[WORKER HANDLER] WASM Engine execution suspended due to simulated crash", "error", err)

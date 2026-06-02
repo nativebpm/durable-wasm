@@ -70,6 +70,30 @@ type FileSnapshotStore struct {
 	Dir string
 }
 
+var _ SnapshotStore = (*FileSnapshotStore)(nil)
+
+// Save writes a full memory snapshot to a file.
+func (f *FileSnapshotStore) Save(id string, snapshot []byte) error {
+	path := fmt.Sprintf("%s.bin", id)
+	if f.Dir != "" {
+		path = fmt.Sprintf("%s/%s.bin", f.Dir, id)
+	}
+	return os.WriteFile(path, snapshot, 0644)
+}
+
+// Load reads a full memory snapshot from a file.
+func (f *FileSnapshotStore) Load(id string) ([]byte, error) {
+	path := fmt.Sprintf("%s.bin", id)
+	if f.Dir != "" {
+		path = fmt.Sprintf("%s/%s.bin", f.Dir, id)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
 func (f *FileSnapshotStore) SaveDeltas(id string, deltas map[int][]byte) error {
 	path := fmt.Sprintf("%s_deltas.json", id)
 	if f.Dir != "" {
@@ -287,6 +311,7 @@ type Engine struct {
 // Session tracks the dynamic execution state of a running WASM instance.
 type Session struct {
 	engine                  *Engine
+	ctx                     context.Context
 	store                   *wasmtime.Store
 	memory                  *wasmtime.Memory
 	instanceID              string
@@ -308,8 +333,27 @@ type Session struct {
 	downloadEOF  bool
 }
 
+var defaultHTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+	},
+}
+
+// EngineOption defines a configuration option for the Engine.
+type EngineOption func(*Engine)
+
+// WithHTTPClient allows configuring a custom HTTP client.
+func WithHTTPClient(client *http.Client) EngineOption {
+	return func(e *Engine) {
+		e.httpClient = client
+	}
+}
+
 // NewEngine creates a new reusable WASM Durable Execution Engine.
-func NewEngine(wasmPath string, store SnapshotStore) (*Engine, error) {
+func NewEngine(wasmPath string, store SnapshotStore, opts ...EngineOption) (*Engine, error) {
 	// Read WASM bytes to calculate SHA256 hash (WASM Module Versioning)
 	wasmBytes, err := os.ReadFile(wasmPath)
 	if err != nil {
@@ -333,26 +377,25 @@ func NewEngine(wasmPath string, store SnapshotStore) (*Engine, error) {
 		return nil, fmt.Errorf("failed to compile WASM module: %w", err)
 	}
 
-	return &Engine{
+	engine := &Engine{
 		wasmEngine: wasmEngine,
 		module:     module,
 		store:      store,
 		wasmHash:   wasmHash,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     90 * time.Second,
-			},
-		},
-	}, nil
+		httpClient: defaultHTTPClient,
+	}
+
+	for _, opt := range opts {
+		opt(engine)
+	}
+
+	return engine, nil
 }
 
 // nolint:gocyclo
 // Execute runs the WASM instance with a given entrypoint and session context.
 // If it finds a saved snapshot, it automatically restores the linear memory.
-func (e *Engine) Execute(instanceID string, entrypoint string, serverAddr string, shouldCrash bool) (bool, error) {
+func (e *Engine) Execute(ctx context.Context, instanceID string, entrypoint string, serverAddr string, shouldCrash bool) (bool, error) {
 	// Load or initialize metadata (WASM Module Versioning & OCC)
 	meta, err := e.store.LoadMetadata(instanceID)
 	if err != nil {
@@ -383,8 +426,12 @@ func (e *Engine) Execute(instanceID string, entrypoint string, serverAddr string
 		runModule = e.module
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	session := &Session{
 		engine:                  e,
+		ctx:                     ctx,
 		instanceID:              instanceID,
 		serverAddr:              serverAddr,
 		shouldCrashOnCheckpoint: shouldCrash,
@@ -402,6 +449,7 @@ func (e *Engine) Execute(instanceID string, entrypoint string, serverAddr string
 	}()
 
 	store := wasmtime.NewStore(e.wasmEngine)
+	defer store.Close() // Explicitly release C-memory!
 	session.store = store
 
 	// Configure WASI
@@ -612,7 +660,13 @@ func (e *Engine) Execute(instanceID string, entrypoint string, serverAddr string
 		} else {
 			// Real external REST API call if endpoint matches serverAddr
 			url := fmt.Sprintf("http://%s/%s", session.serverAddr, apiName)
-			resp, err := e.httpClient.Post(url, "application/octet-stream", io.NopCloser(strings.NewReader(string(request))))
+			req, err := http.NewRequestWithContext(session.ctx, "POST", url, strings.NewReader(string(request)))
+			if err != nil {
+				slog.Error("[ENGINE] Failed to create HTTP request", "url", url, "error", err)
+				return -1
+			}
+			req.Header.Set("Content-Type", "application/octet-stream")
+			resp, err := e.httpClient.Do(req)
 			if err != nil {
 				slog.Error("[ENGINE] Real API call failed", "url", url, "error", err)
 				return -1
@@ -754,6 +808,9 @@ func (e *Engine) Execute(instanceID string, entrypoint string, serverAddr string
 
 	slog.Info("[ENGINE] Invoking entrypoint", "entrypoint", entrypoint)
 	result, err := runFunc.Call(store)
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
 	if err != nil {
 		if session.crashed {
 			return true, err // True indicates a simulated crash occurred
@@ -791,7 +848,7 @@ func (s *Session) handleDownload(ptr int32, length int32) int32 {
 	if s.downloadResp == nil {
 		url := fmt.Sprintf("http://%s/download", s.serverAddr)
 		slog.Info("[ENGINE] GET Request (Stream-first)", "url", url)
-		resp, err := httpstream.NewRequest(context.Background(), *s.engine.httpClient, "GET", url).Send()
+		resp, err := httpstream.NewRequest(s.ctx, *s.engine.httpClient, "GET", url).Send()
 		if err != nil {
 			slog.Error("[ENGINE] GET failed", "error", err)
 			return -1
@@ -843,7 +900,7 @@ func (s *Session) handleUpload(ptr int32, length int32) int32 {
 		s.uploadErrChan = make(chan error, 1)
 
 		go func() {
-			resp, err := httpstream.NewRequest(context.Background(), *s.engine.httpClient, "POST", url).
+			resp, err := httpstream.NewRequest(s.ctx, *s.engine.httpClient, "POST", url).
 				Body(pipeReader, "application/octet-stream").
 				Send()
 			if err != nil {

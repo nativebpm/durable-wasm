@@ -17,6 +17,8 @@ type SqliteSnapshotStore struct {
 	db *sql.DB
 }
 
+var _ SnapshotStore = (*SqliteSnapshotStore)(nil)
+
 // NewSqliteSnapshotStore initializes a new SQLite snapshot store and creates all required tables.
 func NewSqliteSnapshotStore(dbPath string) (*SqliteSnapshotStore, error) {
 	db, err := sql.Open("sqlite", dbPath)
@@ -31,11 +33,21 @@ func NewSqliteSnapshotStore(dbPath string) (*SqliteSnapshotStore, error) {
 		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
 	}
 
+	// Limit connection pool to a single connection to prevent "database is locked" errors
+	// during concurrent read/write operations, which is a standard Go SQLite practice.
+	db.SetMaxOpenConns(1)
+
 	// Optimize performance parameters for concurrent reads and writes
-	_, err = db.Exec("PRAGMA busy_timeout=5000; PRAGMA synchronous=NORMAL;")
+	_, err = db.Exec("PRAGMA busy_timeout=5000;")
 	if err != nil {
 		db.Close()
-		return nil, fmt.Errorf("failed to configure sqlite pragmas: %w", err)
+		return nil, fmt.Errorf("failed to set busy_timeout: %w", err)
+	}
+
+	_, err = db.Exec("PRAGMA synchronous=NORMAL;")
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to configure sqlite synchronous pragma: %w", err)
 	}
 
 	_, err = db.Exec(sqliteSchema)

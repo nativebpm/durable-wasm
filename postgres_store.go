@@ -17,6 +17,8 @@ type PostgresSnapshotStore struct {
 	db *sql.DB
 }
 
+var _ SnapshotStore = (*PostgresSnapshotStore)(nil)
+
 // NewPostgresSnapshotStore initializes a new Postgres snapshot store and creates all required tables.
 func NewPostgresSnapshotStore(connStr string) (*PostgresSnapshotStore, error) {
 	db, err := sql.Open("postgres", connStr)
