@@ -4,62 +4,20 @@ package main
 
 import (
 	"encoding/json"
-	"io"
-	"unsafe"
+	"fmt"
+
+	"github.com/nativebpm/durable-wasm"
 )
 
-// Global state variables for business logic
-var (
-	step        int32  = 0
-	orderID     string = "ORD-CAM-8899"
-	inventoryOk bool   = false
-	paymentOk   bool   = false
-)
-
-// Host function imports
-//
-//go:wasmimport env checkpoint
-func checkpoint()
-
-//go:wasmimport env stream_data
-func stream_data(direction int32, ptr uint32, length uint32) int32
-
-// StreamReader wraps host functions to implement standard io.Reader inside WASM
-type StreamReader struct {
-	direction int32
+// State holds the workflow state.
+// All fields are automatically preserved during checkpoints by memory snapshotting.
+type State struct {
+	OrderID     string
+	InventoryOk bool
+	PaymentOk   bool
 }
 
-func (r *StreamReader) Read(p []byte) (n int, err error) {
-	if len(p) == 0 {
-		return 0, nil
-	}
-	ptr := uint32(uintptr(unsafe.Pointer(&p[0])))
-	bytesRead := stream_data(r.direction, ptr, uint32(len(p)))
-	if bytesRead < 0 {
-		return 0, io.ErrUnexpectedEOF
-	}
-	if bytesRead == 0 {
-		return 0, io.EOF
-	}
-	return int(bytesRead), nil
-}
-
-// StreamWriter wraps host functions to implement standard io.Writer inside WASM
-type StreamWriter struct {
-	direction int32
-}
-
-func (w *StreamWriter) Write(p []byte) (n int, err error) {
-	if len(p) == 0 {
-		return 0, nil
-	}
-	ptr := uint32(uintptr(unsafe.Pointer(&p[0])))
-	bytesWritten := stream_data(w.direction, ptr, uint32(len(p)))
-	if bytesWritten < 0 {
-		return 0, io.ErrClosedPipe
-	}
-	return int(bytesWritten), nil
-}
+var state *State
 
 // Structured entities
 type InventoryRequest struct {
@@ -90,124 +48,124 @@ type FinalOrderRecord struct {
 
 //export run
 func run() int32 {
-	for {
-		switch step {
-		case 0:
-			println("[CAMUNDA WORKER] Step 0: Initializing order process for Camunda...")
-			println("[CAMUNDA WORKER] Order ID:", orderID)
-			step = 1
-			println("[CAMUNDA WORKER] Step 0 completed. Saving state to checkpoint.")
-			checkpoint()
-
-		case 1:
-			println("[CAMUNDA WORKER] Step 1: Performing Inventory Check...")
-
-			writer := &StreamWriter{direction: 1}
-			reader := &StreamReader{direction: 0}
-
-			// Send inventory request
-			req := InventoryRequest{OrderID: orderID, ItemID: "item-7788", Qty: 3}
-			err := json.NewEncoder(writer).Encode(req)
-			if err != nil {
-				println("[CAMUNDA WORKER] Inventory request encode failed:", err.Error())
-				return -1
+	return durable.NewWorkflow(&state).
+		Init(func() *State {
+			return &State{
+				OrderID:     "ORD-CAM-8899",
+				InventoryOk: false,
+				PaymentOk:   false,
 			}
-
-			// Flush / Signal EOF on upload
-			var dummy [1]byte
-			stream_data(1, uint32(uintptr(unsafe.Pointer(&dummy[0]))), 0)
-
-			// Read response
-			var resp InventoryResponse
-			err = json.NewDecoder(reader).Decode(&resp)
-			if err != nil {
-				println("[CAMUNDA WORKER] Inventory response decode failed:", err.Error())
-				return -1
-			}
-
-			if resp.Status == "available" {
-				inventoryOk = true
-				println("[CAMUNDA WORKER] Inventory check status: AVAILABLE")
-			} else {
-				println("[CAMUNDA WORKER] Inventory check status: NOT AVAILABLE")
-				return -2
-			}
-
-			step = 2
-			println("[CAMUNDA WORKER] Step 1 completed. Saving state to checkpoint.")
-			checkpoint()
-
-		case 2:
-			println("[CAMUNDA WORKER] Step 2: Capturing Payment...")
-
-			writer := &StreamWriter{direction: 1}
-			reader := &StreamReader{direction: 0}
-
-			// Send payment request
-			req := PaymentRequest{OrderID: orderID, Amount: 350.0}
-			err := json.NewEncoder(writer).Encode(req)
-			if err != nil {
-				println("[CAMUNDA WORKER] Payment request encode failed:", err.Error())
-				return -1
-			}
-
-			// Flush / Signal EOF on upload
-			var dummy [1]byte
-			stream_data(1, uint32(uintptr(unsafe.Pointer(&dummy[0]))), 0)
-
-			// Read response
-			var resp PaymentResponse
-			err = json.NewDecoder(reader).Decode(&resp)
-			if err != nil {
-				println("[CAMUNDA WORKER] Payment response decode failed:", err.Error())
-				return -1
-			}
-
-			if resp.Status == "success" {
-				paymentOk = true
-				println("[CAMUNDA WORKER] Payment captured successfully.")
-			} else {
-				println("[CAMUNDA WORKER] Payment capture failed.")
-				return -3
-			}
-
-			step = 3
-			println("[CAMUNDA WORKER] Step 2 completed. Saving state to checkpoint.")
-			checkpoint()
-
-		case 3:
-			println("[CAMUNDA WORKER] Step 3: Saving final order record to DB...")
-
-			writer := &StreamWriter{direction: 1}
-
-			result := FinalOrderRecord{
-				OrderID:     orderID,
-				InventoryOk: inventoryOk,
-				PaymentOk:   paymentOk,
-				Status:      "processed",
-			}
-
-			err := json.NewEncoder(writer).Encode(result)
-			if err != nil {
-				println("[CAMUNDA WORKER] Final order record encode failed:", err.Error())
-				return -1
-			}
-
-			// Flush upload
-			var dummy [1]byte
-			stream_data(1, uint32(uintptr(unsafe.Pointer(&dummy[0]))), 0)
-
-			println("[CAMUNDA WORKER] Final order record sent to database.")
-
-			step = 4
-			println("[CAMUNDA WORKER] Step 3 completed. Saving final checkpoint.")
-			checkpoint()
-
-		case 4:
-			println("[CAMUNDA WORKER] Step 4: Camunda process completed successfully.")
-			return 1
-		}
-	}
+		}).
+		Step((*State).initialize).
+		Step((*State).checkInventory).
+		Step((*State).capturePayment).
+		Step((*State).saveOrderRecord).
+		Step((*State).finalizeProcess).
+		Run()
 }
 
 func main() {}
+
+func (s *State) initialize() error {
+	println("[CAMUNDA WORKER] Step 0: Initializing order process for Camunda...")
+	fmt.Printf("[CAMUNDA WORKER] Order ID: %s\n", s.OrderID)
+	return nil
+}
+
+func (s *State) checkInventory() error {
+	println("[CAMUNDA WORKER] Step 1: Performing Inventory Check...")
+
+	// Send inventory request to host stream
+	req := InventoryRequest{OrderID: s.OrderID, ItemID: "item-7788", Qty: 3}
+	err := json.NewEncoder(durable.Writer).Encode(req)
+	if err != nil {
+		return fmt.Errorf("inventory request encode failed: %w", err)
+	}
+
+	// Flush and signal EOF on the upload stream
+	err = durable.Writer.Close()
+	if err != nil {
+		return fmt.Errorf("failed to close writer: %w", err)
+	}
+
+	// Read response from host stream
+	var resp InventoryResponse
+	err = json.NewDecoder(durable.Reader).Decode(&resp)
+	if err != nil {
+		return fmt.Errorf("inventory response decode failed: %w", err)
+	}
+
+	if resp.Status == "available" {
+		s.InventoryOk = true
+		println("[CAMUNDA WORKER] Inventory check status: AVAILABLE")
+	} else {
+		println("[CAMUNDA WORKER] Inventory check status: NOT AVAILABLE")
+		return fmt.Errorf("inventory not available")
+	}
+
+	return nil
+}
+
+func (s *State) capturePayment() error {
+	println("[CAMUNDA WORKER] Step 2: Capturing Payment...")
+
+	// Send payment request
+	req := PaymentRequest{OrderID: s.OrderID, Amount: 350.0}
+	err := json.NewEncoder(durable.Writer).Encode(req)
+	if err != nil {
+		return fmt.Errorf("payment request encode failed: %w", err)
+	}
+
+	// Flush and signal EOF
+	err = durable.Writer.Close()
+	if err != nil {
+		return fmt.Errorf("failed to close writer: %w", err)
+	}
+
+	// Read response
+	var resp PaymentResponse
+	err = json.NewDecoder(durable.Reader).Decode(&resp)
+	if err != nil {
+		return fmt.Errorf("payment response decode failed: %w", err)
+	}
+
+	if resp.Status == "success" {
+		s.PaymentOk = true
+		println("[CAMUNDA WORKER] Payment captured successfully.")
+	} else {
+		println("[CAMUNDA WORKER] Payment capture failed.")
+		return fmt.Errorf("payment capture failed")
+	}
+
+	return nil
+}
+
+func (s *State) saveOrderRecord() error {
+	println("[CAMUNDA WORKER] Step 3: Saving final order record to DB...")
+
+	result := FinalOrderRecord{
+		OrderID:     s.OrderID,
+		InventoryOk: s.InventoryOk,
+		PaymentOk:   s.PaymentOk,
+		Status:      "processed",
+	}
+
+	err := json.NewEncoder(durable.Writer).Encode(result)
+	if err != nil {
+		return fmt.Errorf("final order record encode failed: %w", err)
+	}
+
+	// Flush upload stream
+	err = durable.Writer.Close()
+	if err != nil {
+		return fmt.Errorf("failed to close writer: %w", err)
+	}
+
+	println("[CAMUNDA WORKER] Final order record sent to database.")
+	return nil
+}
+
+func (s *State) finalizeProcess() error {
+	println("[CAMUNDA WORKER] Step 4: Camunda process completed successfully.")
+	return nil
+}
