@@ -3,14 +3,10 @@ package durable
 import (
 	"crypto/rand"
 	"testing"
-
-	"github.com/stretchr/testify/require"
 )
 
 func BenchmarkSnapshotStore_SaveFull(b *testing.B) {
-	store, err := NewSqliteSnapshotStore(":memory:")
-	require.NoError(b, err)
-	defer store.Close()
+	store := newInMemorySnapshotStore()
 
 	// Simulate 4 MB WASM linear memory
 	memorySize := 4 * 1024 * 1024
@@ -19,7 +15,7 @@ func BenchmarkSnapshotStore_SaveFull(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		err = store.Save("bench-instance", data)
+		err := store.Save("bench-instance", data)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -27,9 +23,7 @@ func BenchmarkSnapshotStore_SaveFull(b *testing.B) {
 }
 
 func BenchmarkSnapshotStore_SaveDeltas(b *testing.B) {
-	store, err := NewSqliteSnapshotStore(":memory:")
-	require.NoError(b, err)
-	defer store.Close()
+	store := newInMemorySnapshotStore()
 
 	// Simulate changes in 2 pages (each 4KB) -> total 8KB
 	deltas := map[int][]byte{
@@ -41,7 +35,7 @@ func BenchmarkSnapshotStore_SaveDeltas(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		err = store.SaveDeltas("bench-instance", deltas)
+		err := store.SaveDeltas("bench-instance", deltas)
 		if err != nil {
 			b.Fatal(err)
 		}

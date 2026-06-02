@@ -21,6 +21,7 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
+
 const (
 	sqliteDBFile = "snapshots.db"
 	dbFile       = "database_temporal.json"
@@ -51,26 +52,11 @@ func ExecuteDurableWasmActivity(ctx context.Context, instanceID string, serverAd
 	slog.Info("[HOST ACTIVITY] Executing Durable WASM Activity", "attempt", attempt, "instance_id", instanceID)
 
 	wasmPath := filepath.Join("..", "worker", "worker.wasm")
-	var store durable.SnapshotStore
-	var err error
-	if os.Getenv("TEST_STORE_TYPE") == "postgres" {
-		connStr := os.Getenv("TEST_POSTGRES_CONN")
-		if connStr == "" {
-			connStr = "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
-		}
-		store, err = durable.NewPostgresSnapshotStore(connStr)
-	} else {
-		store, err = durable.NewSqliteSnapshotStore(sqliteDBFile)
+	snapshotsDir := "snapshots"
+	if err := os.MkdirAll(snapshotsDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create snapshots directory: %w", err)
 	}
-
-	if err != nil {
-		return "", fmt.Errorf("failed to initialize snapshot store: %w", err)
-	}
-	defer func() {
-		if closer, ok := store.(interface{ Close() error }); ok {
-			_ = closer.Close()
-		}
-	}()
+	store := &durable.FileSnapshotStore{Dir: snapshotsDir}
 
 	engine, err := durable.NewEngine(wasmPath, store)
 	if err != nil {

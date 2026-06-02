@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	instanceID = "gotenberg-telegram-pipeline"
-	serverAddr = "localhost:18084"
-	dbFile     = "snapshots.db"
+	instanceID   = "gotenberg-telegram-pipeline"
+	serverAddr   = "localhost:18084"
+	snapshotsDir = "snapshots"
 )
 
 func main() {
@@ -29,14 +29,14 @@ func main() {
 	// Give the server a small moment to bind to the port
 	time.Sleep(100 * time.Millisecond)
 
-	// 2. Initialize the Reusable Durable WASM Engine with SQLite store
+	// 2. Initialize the Reusable Durable WASM Engine with File store
 	wasmPath := filepath.Join("..", "worker", "worker.wasm")
-	store, err := durable.NewSqliteSnapshotStore(dbFile)
-	if err != nil {
-		slog.Error("[HOST] Failed to initialize SQLite store", "error", err)
+	_ = os.RemoveAll(snapshotsDir)
+	if err := os.MkdirAll(snapshotsDir, 0755); err != nil {
+		slog.Error("[HOST] Failed to create snapshots directory", "error", err)
 		os.Exit(1)
 	}
-	defer store.Close()
+	store := &durable.FileSnapshotStore{Dir: snapshotsDir}
 
 	engine, err := durable.NewEngine(wasmPath, store)
 	if err != nil {

@@ -19,7 +19,7 @@ import (
 const (
 	serverAddr   = "localhost:18086"
 	dbFile       = "database_camunda.json"
-	sqliteDBFile = "snapshots.db"
+	snapshotsDir = "snapshots"
 	camundaURL   = "http://localhost:8080"
 )
 
@@ -52,14 +52,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 5. Initialize the Reusable Durable WASM Engine with SQLite store
-	wasmPath := filepath.Join("..", "worker", "worker.wasm")
-	store, err := durable.NewSqliteSnapshotStore(sqliteDBFile)
-	if err != nil {
-		slog.Error("[HOST] Failed to initialize SQLite store", "error", err)
+	// 5. Initialize the Reusable Durable WASM Engine with File store
+	_ = os.RemoveAll(snapshotsDir)
+	if err := os.MkdirAll(snapshotsDir, 0755); err != nil {
+		slog.Error("[HOST] Failed to create snapshots directory", "error", err)
 		os.Exit(1)
 	}
-	defer store.Close()
+	wasmPath := filepath.Join("..", "worker", "worker.wasm")
+	store := &durable.FileSnapshotStore{Dir: snapshotsDir}
 
 	engine, err := durable.NewEngine(wasmPath, store)
 	if err != nil {

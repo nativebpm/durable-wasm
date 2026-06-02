@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	instanceID = "csv-worker-instance"
-	serverAddr = "localhost:18082"
-	dbFile     = "snapshots.db"
+	instanceID   = "csv-worker-instance"
+	serverAddr   = "localhost:18082"
+	snapshotsDir = "snapshots"
 )
 
 func main() {
@@ -29,14 +29,14 @@ func main() {
 	// Give the server a small moment to bind to the port
 	time.Sleep(100 * time.Millisecond)
 
-	// 2. Initialize the Reusable Durable WASM Engine with SQLite store
+	// 2. Initialize the Reusable Durable WASM Engine with File store
 	wasmPath := filepath.Join("..", "worker", "worker.wasm")
-	store, err := durable.NewSqliteSnapshotStore(dbFile)
-	if err != nil {
-		slog.Error("[HOST] Failed to initialize SQLite store", "error", err)
+	_ = os.RemoveAll(snapshotsDir)
+	if err := os.MkdirAll(snapshotsDir, 0755); err != nil {
+		slog.Error("[HOST] Failed to create snapshots directory", "error", err)
 		os.Exit(1)
 	}
-	defer store.Close()
+	store := &durable.FileSnapshotStore{Dir: snapshotsDir}
 
 	// Clear any leftover snapshot from previous runs in the database
 	_ = store.Delete(instanceID)
@@ -60,13 +60,13 @@ func main() {
 		}
 	}
 
-	// Verify snapshot exists in SQLite database
+	// Verify snapshot exists in File store
 	_, err = store.Load(instanceID)
 	if err != nil {
-		slog.Error("[HOST] Snapshot was not found in SQLite", "error", err)
+		slog.Error("[HOST] Snapshot was not found in File store", "error", err)
 		os.Exit(1)
 	}
-	slog.Info("[HOST] Verified that snapshot was successfully written to SQLite database")
+	slog.Info("[HOST] Verified that snapshot was successfully written to File store")
 
 	// 4. RUN 2: Restore from checkpoint and resume CSV processing to completion
 	slog.Info("[HOST] RUN 2: Restoring from snapshot and processing CSV stream")
