@@ -67,11 +67,6 @@ func NewWorkflow[T any](statePtr **T) *Workflow[T] {
 	}
 }
 
-// Init stub
-func (w *Workflow[T]) Init(creator func() *T) *Workflow[T] {
-	return w
-}
-
 // Step stub
 func (w *Workflow[T]) Step(step func(*T) error) *Workflow[T] {
 	w.steps = append(w.steps, step)

@@ -15,14 +15,13 @@ type State struct {
 	ProcessedBytes int32
 }
 
-var state *State
+var state = &State{
+	ProcessedBytes: 0,
+}
 
 //export run
 func run() int32 {
 	return durable.NewWorkflow(&state).
-		Init(func() *State {
-			return &State{ProcessedBytes: 0}
-		}).
 		Step((*State).initialize).
 		Step((*State).processStream).
 		Step((*State).finalizeWorkflow).

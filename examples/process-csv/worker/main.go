@@ -20,8 +20,6 @@ type State struct {
 	ValidRecords int32
 }
 
-var state *State
-
 // Target JSON record format
 type UserRecord struct {
 	ID     string  `json:"id"`
@@ -31,15 +29,14 @@ type UserRecord struct {
 	Status string  `json:"status"`
 }
 
+var state = &State{
+	TotalAmount:  0.0,
+	ValidRecords: 0,
+}
+
 //export run
 func run() int32 {
 	return durable.NewWorkflow(&state).
-		Init(func() *State {
-			return &State{
-				TotalAmount:  0.0,
-				ValidRecords: 0,
-			}
-		}).
 		Step((*State).initialize).
 		Step((*State).processCSVStream).
 		Step((*State).finalizeProcess).

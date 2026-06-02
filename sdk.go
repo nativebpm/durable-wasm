@@ -148,14 +148,6 @@ func NewWorkflow[T any](statePtr **T) *Workflow[T] {
 	}
 }
 
-// Init lazily initializes the workflow state on the first run using the creator function.
-func (w *Workflow[T]) Init(creator func() *T) *Workflow[T] {
-	if *w.statePtr == nil {
-		*w.statePtr = creator()
-	}
-	return w
-}
-
 // Step adds a step to the workflow sequence that receives the state instance.
 func (w *Workflow[T]) Step(step func(*T) error) *Workflow[T] {
 	w.steps = append(w.steps, step)

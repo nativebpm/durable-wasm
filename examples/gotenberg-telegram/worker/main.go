@@ -18,17 +18,14 @@ type State struct {
 	PdfBytes  []byte
 }
 
-var state *State
+var state = &State{
+	ChatID: 77665544,
+	FileID: "file_docx_invoice_102",
+}
 
 //export run
 func run() int32 {
 	return durable.NewWorkflow(&state).
-		Init(func() *State {
-			return &State{
-				ChatID: 77665544,
-				FileID: "file_docx_invoice_102",
-			}
-		}).
 		Step((*State).initialize).
 		Step((*State).downloadDocx).
 		Step((*State).convertToPdf).

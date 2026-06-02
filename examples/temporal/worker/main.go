@@ -18,8 +18,6 @@ type State struct {
 	CalculatedVal float64
 }
 
-var state *State
-
 // Structured entities
 type ParamRequest struct {
 	ActivityID string `json:"activity_id"`
@@ -38,17 +36,16 @@ type FinalCalculationResult struct {
 	Completed  bool    `json:"completed"`
 }
 
+var state = &State{
+	ActivityID:    "ACT-TEMP-4455",
+	BaseRate:      0.0,
+	Multiplier:    0.0,
+	CalculatedVal: 0.0,
+}
+
 //export run
 func run() int32 {
 	return durable.NewWorkflow(&state).
-		Init(func() *State {
-			return &State{
-				ActivityID:    "ACT-TEMP-4455",
-				BaseRate:      0.0,
-				Multiplier:    0.0,
-				CalculatedVal: 0.0,
-			}
-		}).
 		Step((*State).initialize).
 		Step((*State).downloadParams).
 		Step((*State).performCalculation).

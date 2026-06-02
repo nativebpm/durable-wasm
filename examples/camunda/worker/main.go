@@ -17,8 +17,6 @@ type State struct {
 	PaymentOk   bool
 }
 
-var state *State
-
 // Structured entities
 type InventoryRequest struct {
 	OrderID string `json:"order_id"`
@@ -46,16 +44,15 @@ type FinalOrderRecord struct {
 	Status      string `json:"status"`
 }
 
+var state = &State{
+	OrderID:     "ORD-CAM-8899",
+	InventoryOk: false,
+	PaymentOk:   false,
+}
+
 //export run
 func run() int32 {
 	return durable.NewWorkflow(&state).
-		Init(func() *State {
-			return &State{
-				OrderID:     "ORD-CAM-8899",
-				InventoryOk: false,
-				PaymentOk:   false,
-			}
-		}).
 		Step((*State).initialize).
 		Step((*State).checkInventory).
 		Step((*State).capturePayment).
