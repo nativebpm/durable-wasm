@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -19,11 +19,12 @@ import (
 const (
 	serverAddr   = "localhost:18086"
 	dbFile       = "database_camunda.json"
+	sqliteDBFile = "snapshots.db"
 	camundaURL   = "http://localhost:8080"
 )
 
 func main() {
-	fmt.Println("[HOST] Starting Camunda-WASM Real Orchestration Example...")
+	slog.Info("[HOST] Starting Camunda-WASM Real Orchestration Example")
 
 	// 1. Clean up old files
 	_ = os.Remove(dbFile)
@@ -38,7 +39,7 @@ func main() {
 	// 3. Initialize Camunda Client
 	client, err := camunda.NewClient(camundaURL, "durable-wasm-worker")
 	if err != nil {
-		fmt.Printf("[HOST ERROR] Failed to initialize Camunda client: %v\n", err)
+		slog.Error("[HOST] Failed to initialize Camunda client", "error", err)
 		os.Exit(1)
 	}
 
@@ -47,17 +48,22 @@ func main() {
 	defer cancel()
 
 	if err := deployProcess(ctx, client); err != nil {
-		fmt.Printf("[HOST ERROR] Failed to deploy process: %v\n", err)
+		slog.Error("[HOST] Failed to deploy process", "error", err)
 		os.Exit(1)
 	}
 
-	// 5. Initialize the Reusable Durable WASM Engine
+	// 5. Initialize the Reusable Durable WASM Engine with SQLite store
 	wasmPath := filepath.Join("..", "worker", "worker.wasm")
-	store := &durable.FileSnapshotStore{Dir: "."}
-	
+	store, err := durable.NewSqliteSnapshotStore(sqliteDBFile)
+	if err != nil {
+		slog.Error("[HOST] Failed to initialize SQLite store", "error", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
 	engine, err := durable.NewEngine(wasmPath, store)
 	if err != nil {
-		fmt.Printf("[HOST ERROR] Failed to initialize WASM engine: %v\n", err)
+		slog.Error("[HOST] Failed to initialize WASM engine", "error", err)
 		os.Exit(1)
 	}
 
@@ -74,70 +80,69 @@ func main() {
 				businessKey = task.ID
 			}
 
-			fmt.Printf("\n--- [WORKER HANDLER] Received task from Camunda! TaskID=%s, BusinessKey=%s ---\n", task.ID, businessKey)
+			slog.Info("[WORKER HANDLER] Received task from Camunda", "task_id", task.ID, "business_key", businessKey)
 
-			snapshotPath := filepath.Join(".", businessKey+".bin")
-			_, err := os.Stat(snapshotPath)
-			hasSnapshot := !os.IsNotExist(err)
+			_, err := store.Load(businessKey)
+			hasSnapshot := err == nil
 
 			var shouldCrash bool
 			if !hasSnapshot {
-				fmt.Println("[WORKER HANDLER] No snapshot found. This is RUN 1 (Fresh start). Enabling crash simulation.")
+				slog.Info("[WORKER HANDLER] No snapshot found. This is RUN 1 (Fresh start). Enabling crash simulation.")
 				shouldCrash = true
 			} else {
-				fmt.Println("[WORKER HANDLER] Snapshot found! This is RUN 2 (Restoration). Resuming WASM execution.")
+				slog.Info("[WORKER HANDLER] Snapshot found! This is RUN 2 (Restoration). Resuming WASM execution.")
 				shouldCrash = false
 			}
 
 			crashed, err := engine.Execute(businessKey, "run", serverAddr, shouldCrash)
 			if err != nil {
 				if crashed {
-					fmt.Printf("[WORKER HANDLER] WASM Engine execution suspended due to simulated crash: %v\n", err)
+					slog.Warn("[WORKER HANDLER] WASM Engine execution suspended due to simulated crash", "error", err)
 					// Fail task in Camunda with 1 retry and 1-second timeout to trigger a retry
-					fmt.Println("[WORKER HANDLER] Reporting task failure to Camunda for simulated crash...")
+					slog.Info("[WORKER HANDLER] Reporting task failure to Camunda for simulated crash...")
 					_ = fail("simulated_host_crash", "WASM state snapshotted, waiting for restoration", 1, 1000)
 					return nil
 				}
-				fmt.Printf("[WORKER HANDLER ERROR] WASM Engine execution failed: %v\n", err)
+				slog.Error("[WORKER HANDLER] WASM Engine execution failed", "error", err)
 				_ = fail(err.Error(), "execution error", 0, 0)
 				return nil
 			}
 
-			fmt.Println("[WORKER HANDLER] WASM Engine execution completed successfully. Completing Camunda task...")
-			
+			slog.Info("[WORKER HANDLER] WASM Engine execution completed successfully. Completing Camunda task...")
+
 			// Complete task in Camunda
 			err = complete().Execute()
 			if err != nil {
-				fmt.Printf("[WORKER HANDLER ERROR] Failed to complete Camunda task: %v\n", err)
+				slog.Error("[WORKER HANDLER] Failed to complete Camunda task", "error", err)
 				return err
 			}
 
-			// Clean up snapshot file
-			_ = os.Remove(snapshotPath)
-			fmt.Println("[WORKER HANDLER] Cleaned up temporary WASM snapshot from disk.")
+			// Clean up snapshot using the store interface
+			_ = store.Delete(businessKey)
+			slog.Info("[WORKER HANDLER] Cleaned up temporary WASM snapshot from store.")
 			return nil
 		},
 	), 60000, []string{})
 
 	// 7. Start the Worker in a background goroutine
 	go func() {
-		fmt.Println("[HOST] Starting Camunda External Task Worker...")
+		slog.Info("[HOST] Starting Camunda External Task Worker")
 		w.Start(ctx)
 	}()
 
 	// 8. Start a process instance in Camunda with unique businessKey
 	uniqueKey := "order-" + uuid.NewString()
-	fmt.Printf("\n[HOST] Starting Camunda process instance with BusinessKey='%s'...\n", uniqueKey)
+	slog.Info("[HOST] Starting Camunda process instance", "business_key", uniqueKey)
 	processInstanceID, err := client.StartProcessInstance(ctx, "DurableWasmCamundaProcess", uniqueKey, nil)
 	if err != nil {
-		fmt.Printf("[HOST ERROR] Failed to start process instance: %v\n", err)
+		slog.Error("[HOST] Failed to start process instance", "error", err)
 		os.Exit(1)
 	}
-	fmt.Printf("[HOST] Process instance started successfully. ID=%s\n", processInstanceID)
+	slog.Info("[HOST] Process instance started successfully", "instance_id", processInstanceID)
 
 	// 9. Wait and verify database output
-	fmt.Println("[HOST] Waiting for the database file to be written...")
-	
+	slog.Info("[HOST] Waiting for the database file to be written...")
+
 	// Wait up to 30 seconds
 	for i := 0; i < 300; i++ {
 		time.Sleep(100 * time.Millisecond)
@@ -147,18 +152,18 @@ func main() {
 	}
 
 	// 10. Verify Database Persistence (Hybrid approach validation)
-	fmt.Println("\n--- HYBRID APPROACH VALIDATION ---")
+	slog.Info("[HOST] HYBRID APPROACH VALIDATION")
 	dbBytes, err := os.ReadFile(dbFile)
 	if err != nil {
-		fmt.Printf("[HOST ERROR] Final database record not found: %v\n", err)
+		slog.Error("[HOST] Final database record not found", "error", err)
 		os.Exit(1)
 	}
-	fmt.Printf("[HOST] Read from persistent DB (%s): %s\n", dbFile, string(dbBytes))
+	slog.Info("[HOST] Read from persistent DB", "file", dbFile, "content", string(dbBytes))
 
 	// Clean up database_camunda.json
 	_ = os.Remove(dbFile)
-	
-	fmt.Println("\n[HOST] Camunda-WASM Real Orchestration example completed successfully.")
+
+	slog.Info("[HOST] Camunda-WASM Real Orchestration example completed successfully")
 	cancel()
 	time.Sleep(500 * time.Millisecond) // Give worker a moment to shut down
 	os.Exit(0)
@@ -176,7 +181,7 @@ func deployProcess(ctx context.Context, client *camunda.Client) error {
 		return err
 	}
 
-	fmt.Printf("[HOST] Deployed BPMN process to Camunda. DeploymentID=%s\n", deploymentID)
+	slog.Info("[HOST] Deployed BPMN process to Camunda", "deployment_id", deploymentID)
 	return nil
 }
 
@@ -200,7 +205,7 @@ func startMockServer(addr string) *http.Server {
 			// Second download request corresponds to Payment Capture response
 			responseBody = `{"status":"success"}`
 		}
-		
+
 		_, _ = w.Write([]byte(responseBody))
 	})
 
@@ -212,16 +217,16 @@ func startMockServer(addr string) *http.Server {
 
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			fmt.Printf("[MOCK SERVICES ERROR] Failed to read upload: %v\n", err)
+			slog.Error("[MOCK SERVICES] Failed to read upload", "error", err)
 			return
 		}
 
 		if count == 1 {
-			fmt.Printf("[MOCK INVENTORY SERVICE] Received check request: %s\n", string(body))
+			slog.Info("[MOCK INVENTORY SERVICE] Received check request", "body", string(body))
 		} else if count == 2 {
-			fmt.Printf("[MOCK PAYMENT SERVICE] Received capture request: %s\n", string(body))
+			slog.Info("[MOCK PAYMENT SERVICE] Received capture request", "body", string(body))
 		} else if count == 3 {
-			fmt.Printf("[MOCK DATABASE API] Received final order record to persist: %s\n", string(body))
+			slog.Info("[MOCK DATABASE API] Received final order record to persist", "body", string(body))
 			_ = os.WriteFile(dbFile, body, 0644)
 		}
 	})
@@ -234,14 +239,14 @@ func startMockServer(addr string) *http.Server {
 	go func() {
 		l, err := net.Listen("tcp", addr)
 		if err != nil {
-			fmt.Printf("[MOCK SERVICES ERROR] Failed to listen: %v\n", err)
+			slog.Error("[MOCK SERVICES] Failed to listen", "error", err)
 			return
 		}
 		if err := server.Serve(l); err != nil && err != http.ErrServerClosed {
-			fmt.Printf("[MOCK SERVICES ERROR] Serve error: %v\n", err)
+			slog.Error("[MOCK SERVICES] Serve error", "error", err)
 		}
 	}()
 
-	fmt.Printf("[MOCK SERVICES] Listening on http://%s\n", addr)
+	slog.Info("[MOCK SERVICES] Listening", "addr", "http://"+addr)
 	return server
 }

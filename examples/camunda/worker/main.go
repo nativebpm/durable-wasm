@@ -1,3 +1,5 @@
+//go:build wasm
+
 package main
 
 import (
@@ -15,6 +17,7 @@ var (
 )
 
 // Host function imports
+//
 //go:wasmimport env checkpoint
 func checkpoint()
 

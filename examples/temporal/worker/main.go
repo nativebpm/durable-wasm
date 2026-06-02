@@ -1,3 +1,5 @@
+//go:build wasm
+
 package main
 
 import (
@@ -8,14 +10,15 @@ import (
 
 // Global state variables for business logic
 var (
-	step         int32   = 0
-	activityID   string  = "ACT-TEMP-4455"
-	baseRate     float64 = 0.0
-	multiplier   float64 = 0.0
+	step          int32   = 0
+	activityID    string  = "ACT-TEMP-4455"
+	baseRate      float64 = 0.0
+	multiplier    float64 = 0.0
 	calculatedVal float64 = 0.0
 )
 
 // Host function imports
+//
 //go:wasmimport env checkpoint
 func checkpoint()
 
@@ -90,7 +93,7 @@ func run() int32 {
 
 		case 1:
 			println("[TEMPORAL WORKER] Step 1: Downloading calculation parameters from host...")
-			
+
 			writer := &StreamWriter{direction: 1}
 			reader := &StreamReader{direction: 0}
 
@@ -124,7 +127,7 @@ func run() int32 {
 
 		case 2:
 			println("[TEMPORAL WORKER] Step 2: Performing calculation...")
-			
+
 			// Simulate complex calculation
 			calculatedVal = baseRate * multiplier * 150.0
 			println("[TEMPORAL WORKER] Calculated value:", calculatedVal)

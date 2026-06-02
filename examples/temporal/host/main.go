@@ -4,28 +4,116 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/nativebpm/durable-wasm"
+	localTemporal "github.com/nativebpm/temporal"
+	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/temporal"
+	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 )
 
 const (
-	instanceID   = "temporal-activity-tx"
-	serverAddr   = "localhost:18085"
-	snapshotFile = "temporal-activity-tx.bin"
+	sqliteDBFile = "snapshots.db"
 	dbFile       = "database_temporal.json"
+	serverAddr   = "localhost:18085"
 )
 
+// GreetWorkflow coordinates execution of the greeting process.
+func DurableWasmWorkflow(ctx workflow.Context, instanceID string, serverAddr string) (string, error) {
+	options := workflow.ActivityOptions{
+		StartToCloseTimeout: 30 * time.Second,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    1 * time.Second,
+			BackoffCoefficient: 1.0,
+			MaximumAttempts:    2, // Attempt 1 fails, Attempt 2 succeeds
+		},
+	}
+	ctx = workflow.WithActivityOptions(ctx, options)
+
+	var result string
+	err := workflow.ExecuteActivity(ctx, ExecuteDurableWasmActivity, instanceID, serverAddr).Get(ctx, &result)
+	return result, err
+}
+
+func ExecuteDurableWasmActivity(ctx context.Context, instanceID string, serverAddr string) (string, error) {
+	info := activity.GetInfo(ctx)
+	attempt := info.Attempt
+
+	slog.Info("[HOST ACTIVITY] Executing Durable WASM Activity", "attempt", attempt, "instance_id", instanceID)
+
+	wasmPath := filepath.Join("..", "worker", "worker.wasm")
+	var store durable.SnapshotStore
+	var err error
+	if os.Getenv("TEST_STORE_TYPE") == "postgres" {
+		connStr := os.Getenv("TEST_POSTGRES_CONN")
+		if connStr == "" {
+			connStr = "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
+		}
+		store, err = durable.NewPostgresSnapshotStore(connStr)
+	} else {
+		store, err = durable.NewSqliteSnapshotStore(sqliteDBFile)
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("failed to initialize snapshot store: %w", err)
+	}
+	defer func() {
+		if closer, ok := store.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+	}()
+
+	engine, err := durable.NewEngine(wasmPath, store)
+	if err != nil {
+		return "", fmt.Errorf("failed to initialize engine: %w", err)
+	}
+
+	// First attempt will simulate crash, second attempt will recover
+	simulateCrash := (attempt == 1)
+	if simulateCrash {
+		slog.Info("[HOST ACTIVITY] Attempt 1: Running WASM worker with simulated crash")
+		// Clean up any old snapshots before starting first run
+		_ = store.Delete(instanceID)
+	} else {
+		slog.Info("[HOST ACTIVITY] Attempt 2: Resuming WASM worker from snapshot")
+	}
+
+	crashed, err := engine.Execute(instanceID, "run", serverAddr, simulateCrash)
+	if err != nil {
+		if crashed {
+			slog.Info("[HOST ACTIVITY] WASM worker suspended/crashed as expected", "error", err)
+			return "", fmt.Errorf("simulated crash: %w", err)
+		}
+		return "", fmt.Errorf("wasm execution failed: %w", err)
+	}
+
+	// Read persistence validation database output
+	dbBytes, err := os.ReadFile(dbFile)
+	if err != nil {
+		return "", fmt.Errorf("final database record not found: %w", err)
+	}
+
+	// Clean up database snapshot since transaction is completed
+	_ = store.Delete(instanceID)
+
+	return string(dbBytes), nil
+}
+
 func main() {
-	fmt.Println("[HOST] Starting Temporal Durable Activity Execution Example...")
+	slog.Info("[HOST] Starting Temporal Durable Activity Execution Example")
 
 	// 1. Clean up old files
-	_ = os.Remove(snapshotFile)
 	_ = os.Remove(dbFile)
+	_ = os.Remove(sqliteDBFile)
 
 	// 2. Start local Mock HTTP Server to mock external billing, CRM, and DB API endpoints
 	mockServer := startMockServer(serverAddr)
@@ -34,68 +122,60 @@ func main() {
 	// Give the server a small moment to bind to the port
 	time.Sleep(100 * time.Millisecond)
 
-	// 3. Initialize the Reusable Durable WASM Engine
-	wasmPath := filepath.Join("..", "worker", "worker.wasm")
-	store := &durable.FileSnapshotStore{Dir: "."}
-	
-	engine, err := durable.NewEngine(wasmPath, store)
+	// 3. Connect to Temporal Server
+	cfg := localTemporal.LoadFromEnv()
+	cfg.TaskQueue = "durable-wasm-temporal-queue"
+
+	slog.Info("[HOST] Connecting to Temporal Server...", "host_port", cfg.HostPort, "namespace", cfg.Namespace)
+	c, err := localTemporal.NewClient(cfg)
 	if err != nil {
-		fmt.Printf("[HOST ERROR] Failed to initialize engine: %v\n", err)
+		slog.Error("[HOST] Failed to create Temporal client", "error", err)
 		os.Exit(1)
 	}
+	defer c.Close()
 
-	// 4. RUN 1: Execute with simulated crash on the first checkpoint (Step 0)
-	fmt.Println("\n--- RUN 1: Starting Temporal Activity with Simulated Crash ---")
-	crashed, err := engine.Execute(instanceID, "run", serverAddr, true)
+	// 4. Initialize and start Temporal Worker in background
+	w := worker.New(c.RawClient(), cfg.TaskQueue, worker.Options{})
+	w.RegisterWorkflow(DurableWasmWorkflow)
+	w.RegisterActivity(ExecuteDurableWasmActivity)
+
+	slog.Info("[HOST] Starting Temporal Worker...")
+	if err := w.Start(); err != nil {
+		slog.Error("[HOST] Failed to start Temporal worker", "error", err)
+		os.Exit(1)
+	}
+	defer w.Stop()
+
+	// 5. Run Temporal Workflow
+	workflowID := "durable-wasm-workflow-" + uuid.New().String()
+	instanceID := "temporal-activity-tx"
+
+	slog.Info("[HOST] Starting Workflow execution", "workflow_id", workflowID)
+	run, err := c.ExecuteWorkflow(context.Background(), client.StartWorkflowOptions{
+		ID:        workflowID,
+		TaskQueue: cfg.TaskQueue,
+	}, DurableWasmWorkflow, instanceID, serverAddr)
 	if err != nil {
-		if crashed {
-			fmt.Printf("[HOST] Activity successfully suspended/crashed: %v\n", err)
-		} else {
-			fmt.Printf("[HOST ERROR] Execution failed: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	// Verify snapshot exists
-	if _, err := os.Stat(snapshotFile); os.IsNotExist(err) {
-		fmt.Println("[HOST ERROR] Snapshot was not created on checkpoint!")
+		slog.Error("[HOST] Failed to start workflow", "error", err)
 		os.Exit(1)
 	}
-	fmt.Println("[HOST] Verified that snapshot file was written to disk.")
 
-	// 5. RUN 2: Restore from checkpoint and resume execution
-	fmt.Println("\n--- RUN 2: Restoring Activity State from Snapshot and Resuming execution ---")
-	crashed, err = engine.Execute(instanceID, "run", serverAddr, false)
+	// 6. Wait for workflow to finish
+	var result string
+	err = run.Get(context.Background(), &result)
 	if err != nil {
-		fmt.Printf("[HOST ERROR] Resumed execution failed: %v\n", err)
+		slog.Error("[HOST] Workflow failed", "error", err)
 		os.Exit(1)
 	}
 
-	if crashed {
-		fmt.Println("[HOST ERROR] Resumed execution crashed unexpectedly!")
-		os.Exit(1)
-	}
-
-	// 6. Verify Database Persistence (Hybrid approach validation)
-	fmt.Println("\n--- HYBRID APPROACH VALIDATION ---")
-	dbBytes, err := os.ReadFile(dbFile)
-	if err != nil {
-		fmt.Printf("[HOST ERROR] Final database record not found: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("[HOST] Read from persistent DB (%s): %s\n", dbFile, string(dbBytes))
-
-	// Clean up snapshot since the transaction is completed (we no longer need workflow memory)
-	_ = os.Remove(snapshotFile)
-	if _, err := os.Stat(snapshotFile); os.IsNotExist(err) {
-		fmt.Println("[HOST] Workflow memory snapshot successfully cleaned up from disk (Transaction Completed).")
-	}
+	slog.Info("[HOST] HYBRID APPROACH VALIDATION")
+	slog.Info("[HOST] Read from persistent DB (via Temporal Workflow)", "content", result)
 
 	// Clean up database_temporal.json
 	_ = os.Remove(dbFile)
-	
-	fmt.Println("\n[HOST] Temporal Activity example completed successfully.")
-	os.Exit(0)
+	_ = os.Remove(sqliteDBFile)
+
+	slog.Info("[HOST] Temporal Activity example completed successfully!")
 }
 
 func startMockServer(addr string) *http.Server {
@@ -119,14 +199,14 @@ func startMockServer(addr string) *http.Server {
 
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			fmt.Printf("[MOCK SERVICES ERROR] Failed to read upload: %v\n", err)
+			slog.Error("[MOCK SERVICES] Failed to read upload", "error", err)
 			return
 		}
 
 		if uploadCount == 1 {
-			fmt.Printf("[MOCK TEMPORAL SERVICE] Received param request query: %s\n", string(body))
+			slog.Info("[MOCK TEMPORAL SERVICE] Received param request query", "body", string(body))
 		} else if uploadCount == 2 {
-			fmt.Printf("[MOCK DATABASE API] Received final calculation result to persist: %s\n", string(body))
+			slog.Info("[MOCK DATABASE API] Received final calculation result to persist", "body", string(body))
 			_ = os.WriteFile(dbFile, body, 0644)
 		}
 	})
@@ -139,14 +219,14 @@ func startMockServer(addr string) *http.Server {
 	go func() {
 		l, err := net.Listen("tcp", addr)
 		if err != nil {
-			fmt.Printf("[MOCK SERVICES ERROR] Failed to listen: %v\n", err)
+			slog.Error("[MOCK SERVICES] Failed to listen", "error", err)
 			return
 		}
 		if err := server.Serve(l); err != nil && err != http.ErrServerClosed {
-			fmt.Printf("[MOCK SERVICES ERROR] Serve error: %v\n", err)
+			slog.Error("[MOCK SERVICES] Serve error", "error", err)
 		}
 	}()
 
-	fmt.Printf("[MOCK SERVICES] Listening on http://%s\n", addr)
+	slog.Info("[MOCK SERVICES] Listening", "addr", "http://"+addr)
 	return server
 }

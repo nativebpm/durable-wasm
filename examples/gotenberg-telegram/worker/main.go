@@ -1,3 +1,5 @@
+//go:build wasm
+
 package main
 
 import (
@@ -9,14 +11,15 @@ import (
 // These variables reside in WebAssembly linear memory and will be persisted
 // inside the snapshot, saving files across host crashes.
 var (
-	step      int32 = 0
-	chatID    int64 = 77665544
+	step      int32  = 0
+	chatID    int64  = 77665544
 	fileID    string = "file_docx_invoice_102"
 	docxBytes []byte
 	pdfBytes  []byte
 )
 
 // Host function imports
+//
 //go:wasmimport env checkpoint
 func checkpoint()
 
@@ -76,7 +79,7 @@ func run() int32 {
 			println("[TELEGRAM-GOTENBERG WORKER] Step 1: Downloading DOCX from Telegram API...")
 
 			reader := &StreamReader{direction: 0}
-			
+
 			// Read the incoming DOCX file stream into global memory slice.
 			// In production, we'd read in chunks.
 			buf := make([]byte, 1024)
@@ -95,7 +98,7 @@ func run() int32 {
 			}
 
 			println("[TELEGRAM-GOTENBERG WORKER] DOCX successfully downloaded. Size:", len(docxBytes), "bytes")
-			
+
 			step = 2
 			println("[TELEGRAM-GOTENBERG WORKER] Step 1 completed. Saving checkpoint.")
 			checkpoint()

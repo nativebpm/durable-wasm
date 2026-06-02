@@ -1,0 +1,13 @@
+dbs:
+  - path: /app/snapshots.db
+    replicas:
+      - type: s3
+        name: seaweedfs
+        endpoint: http://seaweedfs:8333
+        bucket: snapshots-bucket
+        access-key-id: admin
+        secret-access-key: admin123
+        force-path-style: true
+        sync-interval: 100ms
+        snapshot-interval: 24h
+        retention: 5d

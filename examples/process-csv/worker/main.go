@@ -1,3 +1,5 @@
+//go:build wasm
+
 package main
 
 import (
@@ -11,12 +13,13 @@ import (
 
 // Global state variables
 var (
-	step          int32 = 0
-	totalAmount   float64 = 0.0
-	validRecords  int32 = 0
+	step         int32   = 0
+	totalAmount  float64 = 0.0
+	validRecords int32   = 0
 )
 
 // Host imports
+//
 //go:wasmimport env checkpoint
 func checkpoint()
 
