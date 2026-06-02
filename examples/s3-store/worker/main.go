@@ -12,7 +12,6 @@ import (
 // Global state variables are automatically preserved by memory snapshotting.
 var (
 	processedBytes int32 = 0
-	inputData      []byte
 )
 
 //export run
