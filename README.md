@@ -14,13 +14,13 @@ A robust, highly-reusable, and lightweight Durable Execution Engine built on Go,
 ## Project Structure
 - `engine.go`: Core execution engine managing execution lifecycles, memory recovery, host-call API triggers, and streaming.
 - `s3_store.go`: Implementation of `SnapshotStore` using S3-compatible object storage (utilizing native If-Match/If-None-Match ETag OCC).
-- `FileSnapshotStore` (defined in `engine.go`): Implementation of `SnapshotStore` using local files (ideal for local debugging and dev environments).
+- `FileSnapshotStore` (defined in `fs_store.go`): Implementation of `SnapshotStore` using local files (ideal for local debugging and dev environments).
 - `examples/`: Real-world orchestration use cases:
   - `camunda/`: Service task orchestration using Camunda 7 External Tasks with simulated crash recovery.
   - `temporal/`: Long-running Math/CRM activity run in a simulated Temporal execution environment with checkpointing.
   - `process-csv/`: High-performance CSV processing and mapping using $O(1)$ RAM streaming.
   - `gotenberg-telegram/`: Streams a document from Telegram Bot API, converts it to PDF using Gotenberg, and streams it back.
-  - `durable-s3/`: Baseline local demonstration of memory snapshotting and restoration.
+  - `s3-store/`: Baseline demonstration of memory snapshotting, restoration, and native OCC using S3SnapshotStore.
 
 ---
 
@@ -41,8 +41,8 @@ go test -v ./...
 
 ## Execution Examples
 
-### 1. Simple Stream & Crash Demonstration
-Runs the host orchestrator using mock streaming endpoints. It executes the worker, triggers a simulated crash, writes the snapshot to disk, restarts, restores memory, and runs to completion.
+### 1. Simple Stream & Crash Demonstration (CSV processing)
+Runs the host orchestrator using mock streaming endpoints. It executes the worker, triggers a simulated crash, writes the snapshots to local files, restarts, restores memory, and runs to completion.
 ```bash
 make -C durable-wasm run
 ```
@@ -71,6 +71,12 @@ make -C durable-wasm run-csv-example
 Streams a document template, renders it, converts to PDF via Gotenberg API, and uploads it back.
 ```bash
 make -C durable-wasm run-gotenberg-telegram-example
+```
+
+### 6. S3 Native Snapshot Store demo
+Runs a baseline memory snapshotting and restoration orchestrator saving modules and progress directly to S3/MinIO.
+```bash
+make -C durable-wasm run-s3-store-example
 ```
 
 ---

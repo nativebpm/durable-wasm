@@ -242,7 +242,7 @@ func TestDurableExecutionLifecycle(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// 3. Initialize engine
-	wasmPath := filepath.Join("examples", "durable-s3", "worker", "worker.wasm")
+	wasmPath := filepath.Join("examples", "s3-store", "worker", "worker.wasm")
 
 	store := newInMemorySnapshotStore()
 
