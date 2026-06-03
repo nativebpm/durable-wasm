@@ -1,6 +1,6 @@
 //go:build !wasm
 
-package wasman
+package runner
 
 import (
 	"errors"
@@ -9,7 +9,7 @@ import (
 )
 
 // Stub error for non-WASM execution
-var errOnlySupportedInWASM = errors.New("wasman sdk is only supported when compiling for WebAssembly (wasm)")
+var errOnlySupportedInWASM = errors.New("wasman guest runner is only supported when compiling for WebAssembly (wasm)")
 
 // Checkpoint stub
 func Checkpoint() {}
@@ -96,5 +96,3 @@ func (c *APICall) WithPayload(payload []byte) *APICall {
 func (c *APICall) Send() ([]byte, error) {
 	return nil, errOnlySupportedInWASM
 }
-
-

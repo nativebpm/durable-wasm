@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/nativebpm/wasman"
+	"github.com/nativebpm/wasman/runner"
 )
 
 // State holds the workflow state.
@@ -52,7 +52,7 @@ var state = &State{
 
 //export run
 func run() int32 {
-	return wasman.NewWorkflow().
+	return runner.NewWorkflow().
 		Step(state.initialize).
 		Step(state.checkInventory).
 		Step(state.capturePayment).
@@ -74,20 +74,20 @@ func (s *State) checkInventory() error {
 
 	// Send inventory request to host stream
 	req := InventoryRequest{OrderID: s.OrderID, ItemID: "item-7788", Qty: 3}
-	err := json.NewEncoder(wasman.Writer).Encode(req)
+	err := json.NewEncoder(runner.Writer).Encode(req)
 	if err != nil {
 		return fmt.Errorf("inventory request encode failed: %w", err)
 	}
 
 	// Flush and signal EOF on the upload stream
-	err = wasman.Writer.Close()
+	err = runner.Writer.Close()
 	if err != nil {
 		return fmt.Errorf("failed to close writer: %w", err)
 	}
 
 	// Read response from host stream
 	var resp InventoryResponse
-	err = json.NewDecoder(wasman.Reader).Decode(&resp)
+	err = json.NewDecoder(runner.Reader).Decode(&resp)
 	if err != nil {
 		return fmt.Errorf("inventory response decode failed: %w", err)
 	}
@@ -108,20 +108,20 @@ func (s *State) capturePayment() error {
 
 	// Send payment request
 	req := PaymentRequest{OrderID: s.OrderID, Amount: 350.0}
-	err := json.NewEncoder(wasman.Writer).Encode(req)
+	err := json.NewEncoder(runner.Writer).Encode(req)
 	if err != nil {
 		return fmt.Errorf("payment request encode failed: %w", err)
 	}
 
 	// Flush and signal EOF
-	err = wasman.Writer.Close()
+	err = runner.Writer.Close()
 	if err != nil {
 		return fmt.Errorf("failed to close writer: %w", err)
 	}
 
 	// Read response
 	var resp PaymentResponse
-	err = json.NewDecoder(wasman.Reader).Decode(&resp)
+	err = json.NewDecoder(runner.Reader).Decode(&resp)
 	if err != nil {
 		return fmt.Errorf("payment response decode failed: %w", err)
 	}
@@ -147,13 +147,13 @@ func (s *State) saveOrderRecord() error {
 		Status:      "processed",
 	}
 
-	err := json.NewEncoder(wasman.Writer).Encode(result)
+	err := json.NewEncoder(runner.Writer).Encode(result)
 	if err != nil {
 		return fmt.Errorf("final order record encode failed: %w", err)
 	}
 
 	// Flush upload stream
-	err = wasman.Writer.Close()
+	err = runner.Writer.Close()
 	if err != nil {
 		return fmt.Errorf("failed to close writer: %w", err)
 	}

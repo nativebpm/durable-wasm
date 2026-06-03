@@ -2,6 +2,7 @@ package wasman
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -23,21 +24,23 @@ import (
 )
 
 type inMemorySnapshotStore struct {
-	mu        sync.RWMutex
-	snapshots map[string][]byte
-	deltas    map[string]map[int][]byte
-	oplogs    map[string][]OplogEntry
-	meta      map[string]*InstanceMeta
-	wasm      map[string][]byte
+	mu          sync.RWMutex
+	snapshots   map[string][]byte
+	deltas      map[string]map[int][]byte
+	oplogs      map[string][]OplogEntry
+	meta        map[string]*InstanceMeta
+	wasm        map[string][]byte
+	activeIndex []byte
 }
 
 func newInMemorySnapshotStore() *inMemorySnapshotStore {
 	return &inMemorySnapshotStore{
-		snapshots: make(map[string][]byte),
-		deltas:    make(map[string]map[int][]byte),
-		oplogs:    make(map[string][]OplogEntry),
-		meta:      make(map[string]*InstanceMeta),
-		wasm:      make(map[string][]byte),
+		snapshots:   make(map[string][]byte),
+		deltas:      make(map[string]map[int][]byte),
+		oplogs:      make(map[string][]OplogEntry),
+		meta:        make(map[string]*InstanceMeta),
+		wasm:        make(map[string][]byte),
+		activeIndex: []byte("[]"),
 	}
 }
 
@@ -198,6 +201,53 @@ func (s *inMemorySnapshotStore) LoadWasm(hash string) ([]byte, error) {
 		return nil, errors.New("not found")
 	}
 	return w, nil
+}
+
+func (s *inMemorySnapshotStore) UpdateActiveIndex(id string, info []byte, completed bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var index []map[string]interface{}
+	if len(s.activeIndex) > 0 {
+		_ = json.Unmarshal(s.activeIndex, &index)
+	}
+
+	var newInfo map[string]interface{}
+	if err := json.Unmarshal(info, &newInfo); err != nil {
+		return err
+	}
+
+	updated := false
+	var nextIndex []map[string]interface{}
+	for _, entry := range index {
+		if entry["instance_id"] == id {
+			if !completed {
+				nextIndex = append(nextIndex, newInfo)
+				updated = true
+			}
+		} else {
+			nextIndex = append(nextIndex, entry)
+		}
+	}
+	if !updated && !completed {
+		nextIndex = append(nextIndex, newInfo)
+	}
+
+	newData, err := json.Marshal(nextIndex)
+	if err != nil {
+		return err
+	}
+	s.activeIndex = newData
+	return nil
+}
+
+func (s *inMemorySnapshotStore) LoadActiveIndex() ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.activeIndex) == 0 {
+		return []byte("[]"), nil
+	}
+	return s.activeIndex, nil
 }
 
 var _ SnapshotStore = (*inMemorySnapshotStore)(nil)
@@ -464,6 +514,16 @@ func TestS3SnapshotStore(t *testing.T) {
 	_, err = store.Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
 		Bucket: aws.String(store.bucket),
 		Key:    aws.String("wasm/" + wasmHash + ".wasm"),
+	})
+	require.NoError(t, err)
+
+	// Test S3 Active Index
+	testStoreActiveIndex(t, store)
+
+	// Clean up active index file from S3 too
+	_, err = store.Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+		Bucket: aws.String(store.bucket),
+		Key:    aws.String("instances/active_index.json"),
 	})
 	require.NoError(t, err)
 }
@@ -980,4 +1040,71 @@ func TestSoakStressTesting(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+func TestActiveIndex(t *testing.T) {
+	// 1. Test with InMemory Store
+	inMemStore := newInMemorySnapshotStore()
+	testStoreActiveIndex(t, inMemStore)
+
+	// 2. Test with FileSnapshotStore
+	tempDir := t.TempDir()
+	fsStore := &FileSnapshotStore{Dir: tempDir}
+	testStoreActiveIndex(t, fsStore)
+}
+
+func testStoreActiveIndex(t *testing.T, store SnapshotStore) {
+	// Initial load should be empty array
+	data, err := store.LoadActiveIndex()
+	require.NoError(t, err)
+	assert.JSONEq(t, "[]", string(data))
+
+	// Add instance 1
+	info1 := []byte(`{"instance_id":"inst-1","process_id":"p1","status":"active"}`)
+	err = store.UpdateActiveIndex("inst-1", info1, false)
+	require.NoError(t, err)
+
+	data, err = store.LoadActiveIndex()
+	require.NoError(t, err)
+	var list []map[string]interface{}
+	err = json.Unmarshal(data, &list)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, "inst-1", list[0]["instance_id"])
+	assert.Equal(t, "p1", list[0]["process_id"])
+	assert.Equal(t, "active", list[0]["status"])
+
+	// Update instance 1
+	info1Updated := []byte(`{"instance_id":"inst-1","process_id":"p1","status":"running"}`)
+	err = store.UpdateActiveIndex("inst-1", info1Updated, false)
+	require.NoError(t, err)
+
+	data, err = store.LoadActiveIndex()
+	require.NoError(t, err)
+	err = json.Unmarshal(data, &list)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, "running", list[0]["status"])
+
+	// Add instance 2
+	info2 := []byte(`{"instance_id":"inst-2","process_id":"p2","status":"active"}`)
+	err = store.UpdateActiveIndex("inst-2", info2, false)
+	require.NoError(t, err)
+
+	data, err = store.LoadActiveIndex()
+	require.NoError(t, err)
+	err = json.Unmarshal(data, &list)
+	require.NoError(t, err)
+	require.Len(t, list, 2)
+
+	// Complete instance 1 (should remove it from active index)
+	err = store.UpdateActiveIndex("inst-1", info1Updated, true)
+	require.NoError(t, err)
+
+	data, err = store.LoadActiveIndex()
+	require.NoError(t, err)
+	err = json.Unmarshal(data, &list)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, "inst-2", list[0]["instance_id"])
 }

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/nativebpm/wasman"
+	"github.com/nativebpm/wasman/runner"
 )
 
 // State holds the workflow state.
@@ -25,7 +25,7 @@ var state = &State{
 
 //export run
 func run() int32 {
-	return wasman.NewWorkflow().
+	return runner.NewWorkflow().
 		Step(state.initialize).
 		Step(state.downloadDocx).
 		Step(state.convertToPdf).
@@ -49,7 +49,7 @@ func (s *State) downloadDocx() error {
 	// Read the incoming DOCX file stream into memory slice.
 	buf := make([]byte, 1024)
 	for {
-		n, err := wasman.Reader.Read(buf)
+		n, err := runner.Reader.Read(buf)
 		if n > 0 {
 			s.DocxBytes = append(s.DocxBytes, buf[:n]...)
 		}
@@ -69,7 +69,7 @@ func (s *State) convertToPdf() error {
 	println("[TELEGRAM-GOTENBERG WORKER] Step 2: Converting DOCX to PDF via Gotenberg API...")
 
 	// Stream the docx bytes from WASM memory to Gotenberg via host stream
-	n, err := wasman.Writer.Write(s.DocxBytes)
+	n, err := runner.Writer.Write(s.DocxBytes)
 	if err != nil {
 		return fmt.Errorf("gotenberg upload failed: %w", err)
 	}
@@ -78,7 +78,7 @@ func (s *State) convertToPdf() error {
 	}
 
 	// Flush and signal upload EOF
-	err = wasman.Writer.Close()
+	err = runner.Writer.Close()
 	if err != nil {
 		return fmt.Errorf("failed to close writer: %w", err)
 	}
@@ -86,7 +86,7 @@ func (s *State) convertToPdf() error {
 	// Read converted PDF bytes back into memory slice
 	buf := make([]byte, 1024)
 	for {
-		n, err := wasman.Reader.Read(buf)
+		n, err := runner.Reader.Read(buf)
 		if n > 0 {
 			s.PdfBytes = append(s.PdfBytes, buf[:n]...)
 		}
@@ -106,7 +106,7 @@ func (s *State) sendPdfToUser() error {
 	println("[TELEGRAM-GOTENBERG WORKER] Step 3: Sending PDF back to Telegram User...")
 
 	// Stream PDF bytes from WASM memory to Telegram sendDocument via host
-	n, err := wasman.Writer.Write(s.PdfBytes)
+	n, err := runner.Writer.Write(s.PdfBytes)
 	if err != nil {
 		return fmt.Errorf("telegram upload failed: %w", err)
 	}
@@ -115,7 +115,7 @@ func (s *State) sendPdfToUser() error {
 	}
 
 	// Flush and signal upload EOF
-	err = wasman.Writer.Close()
+	err = runner.Writer.Close()
 	if err != nil {
 		return fmt.Errorf("failed to close writer: %w", err)
 	}

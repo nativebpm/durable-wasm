@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -386,4 +388,92 @@ func (s *S3SnapshotStore) Delete(id string) error {
 		}
 	}
 	return nil
+}
+
+// UpdateActiveIndex updates the global active index file on S3 using OCC (If-Match ETag).
+func (s *S3SnapshotStore) UpdateActiveIndex(id string, info []byte, completed bool) error {
+	key := "instances/active_index.json"
+	maxRetries := 5
+
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// 1. Read existing index
+		data, etag, err := s.readObject(key)
+		var index []map[string]interface{}
+
+		if err != nil && !isNotFound(err) {
+			lastErr = fmt.Errorf("failed to read active index from S3: %w", err)
+			slog.Warn("[S3 STORE] Temporary read active index failure, retrying...", "attempt", attempt+1, "error", err)
+			time.Sleep(time.Duration(10+attempt*20) * time.Millisecond)
+			continue
+		}
+		if err == nil {
+			_ = json.Unmarshal(data, &index)
+		}
+
+		// 2. Parse new info
+		var newInfo map[string]interface{}
+		if err = json.Unmarshal(info, &newInfo); err != nil {
+			return fmt.Errorf("failed to unmarshal new index info: %w", err)
+		}
+
+		// 3. Update index slice
+		updated := false
+		nextIndex := make([]map[string]interface{}, 0)
+		for _, entry := range index {
+			if entry["instance_id"] == id {
+				if !completed {
+					nextIndex = append(nextIndex, newInfo)
+					updated = true
+				}
+			} else {
+				nextIndex = append(nextIndex, entry)
+			}
+		}
+		if !updated && !completed {
+			nextIndex = append(nextIndex, newInfo)
+		}
+
+		// 4. Serialize back
+		newData, err := json.Marshal(nextIndex)
+		if err != nil {
+			return fmt.Errorf("failed to marshal active index: %w", err)
+		}
+
+		// 5. Atomic write with IfMatch or IfNoneMatch
+		input := &s3.PutObjectInput{
+			Bucket: aws.String(s.bucket),
+			Key:    aws.String(key),
+			Body:   bytes.NewReader(newData),
+		}
+		if etag == "" {
+			input.IfNoneMatch = aws.String("*")
+		} else {
+			input.IfMatch = aws.String(etag)
+		}
+
+		_, err = s.Client.PutObject(context.Background(), input)
+		if err == nil {
+			return nil // Success!
+		}
+
+		lastErr = fmt.Errorf("failed to write active index to S3: %w", err)
+		slog.Warn("[S3 STORE] Temporary write active index failure (OCC or network), retrying...", "attempt", attempt+1, "error", err)
+		time.Sleep(time.Duration(10+attempt*20) * time.Millisecond)
+	}
+
+	return fmt.Errorf("failed to update active index on S3 after %d attempts: %w", maxRetries, lastErr)
+}
+
+// LoadActiveIndex loads the global active index file from S3.
+func (s *S3SnapshotStore) LoadActiveIndex() ([]byte, error) {
+	key := "instances/active_index.json"
+	data, _, err := s.readObject(key)
+	if err != nil {
+		if isNotFound(err) {
+			return []byte("[]"), nil
+		}
+		return nil, fmt.Errorf("failed to load active index from S3: %w", err)
+	}
+	return data, nil
 }

@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nativebpm/wasman"
+	"github.com/nativebpm/wasman/runner"
 )
 
 // State holds the workflow state.
@@ -36,7 +36,7 @@ var state = &State{
 
 //export run
 func run() int32 {
-	return wasman.NewWorkflow().
+	return runner.NewWorkflow().
 		Step(state.initialize).
 		Step(state.processCSVStream).
 		Step(state.finalizeProcess).
@@ -53,7 +53,7 @@ func (s *State) initialize() error {
 func (s *State) processCSVStream() error {
 	println("[CSV WORKER] Step 1: Processing CSV stream and generating JSON output...")
 
-	csvReader := csv.NewReader(wasman.Reader)
+	csvReader := csv.NewReader(runner.Reader)
 	// Read the header row
 	header, err := csvReader.Read()
 	if err != nil {
@@ -67,7 +67,7 @@ func (s *State) processCSVStream() error {
 
 	// We will write output as line-delimited JSON or JSON stream
 	// To stream items one by one, we use json.NewEncoder
-	jsonEncoder := json.NewEncoder(wasman.Writer)
+	jsonEncoder := json.NewEncoder(runner.Writer)
 
 	for {
 		row, err := csvReader.Read()
@@ -117,7 +117,7 @@ func (s *State) processCSVStream() error {
 	}
 
 	// Close the upload stream by sending EOF
-	return wasman.Writer.Close()
+	return runner.Writer.Close()
 }
 
 func (s *State) finalizeProcess() error {

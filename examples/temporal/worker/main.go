@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/nativebpm/wasman"
+	"github.com/nativebpm/wasman/runner"
 )
 
 // State holds the workflow state.
@@ -45,7 +45,7 @@ var state = &State{
 
 //export run
 func run() int32 {
-	return wasman.NewWorkflow().
+	return runner.NewWorkflow().
 		Step(state.initialize).
 		Step(state.downloadParams).
 		Step(state.performCalculation).
@@ -67,20 +67,20 @@ func (s *State) downloadParams() error {
 
 	// Send param request
 	req := ParamRequest{ActivityID: s.ActivityID}
-	err := json.NewEncoder(wasman.Writer).Encode(req)
+	err := json.NewEncoder(runner.Writer).Encode(req)
 	if err != nil {
 		return fmt.Errorf("request parameters encode failed: %w", err)
 	}
 
 	// Flush and signal EOF
-	err = wasman.Writer.Close()
+	err = runner.Writer.Close()
 	if err != nil {
 		return fmt.Errorf("failed to close writer: %w", err)
 	}
 
 	// Read response
 	var resp ParamResponse
-	err = json.NewDecoder(wasman.Reader).Decode(&resp)
+	err = json.NewDecoder(runner.Reader).Decode(&resp)
 	if err != nil {
 		return fmt.Errorf("response parameters decode failed: %w", err)
 	}
@@ -111,13 +111,13 @@ func (s *State) saveFinalRecord() error {
 		Completed:  true,
 	}
 
-	err := json.NewEncoder(wasman.Writer).Encode(result)
+	err := json.NewEncoder(runner.Writer).Encode(result)
 	if err != nil {
 		return fmt.Errorf("final result encode failed: %w", err)
 	}
 
 	// Flush upload stream
-	err = wasman.Writer.Close()
+	err = runner.Writer.Close()
 	if err != nil {
 		return fmt.Errorf("failed to close writer: %w", err)
 	}

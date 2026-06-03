@@ -1,6 +1,6 @@
 //go:build wasm
 
-package wasman
+package runner
 
 import (
 	"errors"
@@ -124,7 +124,7 @@ func Run(steps ...func() error) int32 {
 	for int(currentStep) < len(steps) {
 		stepFunc := steps[currentStep]
 		if err := stepFunc(); err != nil {
-			println("[SDK ERROR] step failed:", err.Error())
+			println("[WASMAN ERROR] step failed:", err.Error())
 			return -1
 		}
 		currentStep++
@@ -177,5 +177,3 @@ func (c *APICall) WithPayload(payload []byte) *APICall {
 func (c *APICall) Send() ([]byte, error) {
 	return CallAPI(c.name, c.payload)
 }
-
-

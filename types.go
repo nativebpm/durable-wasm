@@ -56,6 +56,10 @@ type SnapshotStore interface {
 	// WASM Registry for Multi-Version Support
 	SaveWasm(hash string, wasmBytes []byte) error
 	LoadWasm(hash string) ([]byte, error)
+
+	// Active Index for Cockpit visualization
+	UpdateActiveIndex(id string, info []byte, completed bool) error
+	LoadActiveIndex() ([]byte, error)
 }
 
 // Engine coordinates execution, compilation, and snapshotting of WASM modules.

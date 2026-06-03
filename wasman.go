@@ -60,6 +60,11 @@ func NewEngine(wasmPath string, store SnapshotStore, opts ...EngineOption) (*Eng
 	return engine, nil
 }
 
+// Store returns the SnapshotStore associated with the Engine.
+func (e *Engine) Store() SnapshotStore {
+	return e.store
+}
+
 // nolint:gocyclo
 // Execute runs the WASM instance with a given entrypoint and session context.
 // If it finds a saved snapshot, it automatically restores the linear memory.
