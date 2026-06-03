@@ -1,13 +1,13 @@
 # Wasman: Durable WebAssembly (WASM) Execution Engine
 
-A robust, highly-reusable, and lightweight Durable Execution Engine built on Go, WebAssembly (WASM), and Wasmtime. It provides fault-tolerant execution of custom business logic inside a secure sandbox with automatic memory snapshotting, failure recovery, and memory-efficient streaming.
+A robust, highly-reusable, and lightweight Durable Execution Engine built on Go, WebAssembly (WASM), and wazero. It provides fault-tolerant execution of custom business logic inside a secure sandbox with automatic memory snapshotting, failure recovery, and memory-efficient streaming, completely free of CGO and glibc dependencies.
 
 ## Features
 - **Durable Execution**: Pauses execution at checkpoints, snapshots the WASM linear memory, and restores state seamlessly after crashes or restarts.
 - **$O(1)$ RAM Stream-first HTTP**: Transfers arbitrary stream data (CSV, files, binary payloads) in 4KB chunks directly into/from WASM linear memory via `io.Pipe`, guaranteeing constant memory usage regardless of payload size.
-- **WASM Sandbox**: Executes custom code inside a secure virtual machine sandbox via `wasmtime-go`.
+- **WASM Sandbox**: Executes custom code inside a secure virtual machine sandbox via the pure Go `wazero` runtime (no CGO, works in `scratch` docker images out of the box).
 - **Simple Reusable API**: Simplifies client imports by exposing all key host interfaces (`Engine`, `Session`, `SnapshotStore`) at the module root level.
-- **Robust Failure Resilience**: Avoids resource leaks with reusable context-aware HTTP connections and explicit Wasmtime store cleanup.
+- **Robust Failure Resilience**: Avoids resource leaks with reusable context-aware HTTP connections and explicit wazero runtime cleanup.
 
 ---
 

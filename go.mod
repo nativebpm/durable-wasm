@@ -7,13 +7,13 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.20
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.102.2
 	github.com/aws/smithy-go v1.26.0
-	github.com/bytecodealliance/wasmtime-go/v20 v20.0.0
 	github.com/google/uuid v1.6.0
 	github.com/nativebpm/camunda v0.0.15
 	github.com/nativebpm/temporal v0.0.7
-	github.com/nativebpm/httpstream v0.0.3
-	github.com/stretchr/testify v1.11.1
 	github.com/nativebpm/wasman/runner v0.0.1
+	github.com/nativebpm/httpstream v0.0.4
+	github.com/stretchr/testify v1.11.1
+	github.com/tetratelabs/wazero v1.12.0
 	go.temporal.io/sdk v1.33.0
 )
 
@@ -50,7 +50,7 @@ require (
 	go.temporal.io/api v1.44.1 // indirect
 	golang.org/x/net v0.28.0 // indirect
 	golang.org/x/sync v0.8.0 // indirect
-	golang.org/x/sys v0.24.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
 	golang.org/x/text v0.17.0 // indirect
 	golang.org/x/time v0.6.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240827150818-7e3bb234dfed // indirect
@@ -61,4 +61,3 @@ require (
 )
 
 replace github.com/nativebpm/wasman/runner => ./runner
-

@@ -16,7 +16,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/bytecodealliance/wasmtime-go/v20"
 	"github.com/google/uuid"
 	"github.com/nativebpm/wasman/testdata"
 	"github.com/stretchr/testify/assert"
@@ -328,12 +327,11 @@ func TestDurableExecutionLifecycle(t *testing.T) {
 func TestDirtyPageAndOplog(t *testing.T) {
 	instanceID := "test-dirty-oplog-instance"
 
-	wasmBytes, err := wasmtime.Wat2Wasm(testdata.DirtyPageOplogWat)
-	require.NoError(t, err)
+	wasmBytes := testdata.DirtyPageOplogWasm
 
 	tempDir := t.TempDir()
 	wasmPath := filepath.Join(tempDir, "test.wasm")
-	err = os.WriteFile(wasmPath, wasmBytes, 0644)
+	err := os.WriteFile(wasmPath, wasmBytes, 0644)
 	require.NoError(t, err)
 
 	store := newInMemorySnapshotStore()
@@ -531,12 +529,11 @@ func TestS3SnapshotStore(t *testing.T) {
 func TestHostGetTime(t *testing.T) {
 	instanceID := "test-time-instance"
 
-	wasmBytes, err := wasmtime.Wat2Wasm(testdata.HostGetTimeWat)
-	require.NoError(t, err)
+	wasmBytes := testdata.HostGetTimeWasm
 
 	tempDir := t.TempDir()
 	wasmPath := filepath.Join(tempDir, "test.wasm")
-	err = os.WriteFile(wasmPath, wasmBytes, 0644)
+	err := os.WriteFile(wasmPath, wasmBytes, 0644)
 	require.NoError(t, err)
 
 	store := newInMemorySnapshotStore()
@@ -591,12 +588,11 @@ func TestHostGetTime(t *testing.T) {
 func TestMultiCheckpointRecovery(t *testing.T) {
 	instanceID := "test-multi-checkpoint-instance"
 
-	wasmBytes, err := wasmtime.Wat2Wasm(testdata.MultiCheckpointWat)
-	require.NoError(t, err)
+	wasmBytes := testdata.MultiCheckpointWasm
 
 	tempDir := t.TempDir()
 	wasmPath := filepath.Join(tempDir, "test.wasm")
-	err = os.WriteFile(wasmPath, wasmBytes, 0644)
+	err := os.WriteFile(wasmPath, wasmBytes, 0644)
 	require.NoError(t, err)
 
 	store := newInMemorySnapshotStore()
@@ -647,13 +643,11 @@ func TestWasmModuleHashMismatch(t *testing.T) {
 	wasmPath1 := filepath.Join(tempDir, "test1.wasm")
 	wasmPath2 := filepath.Join(tempDir, "test2.wasm")
 
-	wasmBytes1, err := wasmtime.Wat2Wasm(testdata.HashMismatchWat1)
-	require.NoError(t, err)
-	err = os.WriteFile(wasmPath1, wasmBytes1, 0644)
+	wasmBytes1 := testdata.HashMismatchWasm1
+	err := os.WriteFile(wasmPath1, wasmBytes1, 0644)
 	require.NoError(t, err)
 
-	wasmBytes2, err := wasmtime.Wat2Wasm(testdata.HashMismatchWat2)
-	require.NoError(t, err)
+	wasmBytes2 := testdata.HashMismatchWasm2
 	err = os.WriteFile(wasmPath2, wasmBytes2, 0644)
 	require.NoError(t, err)
 
@@ -697,12 +691,11 @@ func TestConcurrentExecution(t *testing.T) {
 	instanceID := "test-concurrent-instance"
 	serverAddr := "localhost:18084"
 
-	wasmBytes, err := wasmtime.Wat2Wasm(testdata.ConcurrentExecutionWat)
-	require.NoError(t, err)
+	wasmBytes := testdata.ConcurrentExecutionWasm
 
 	tempDir := t.TempDir()
 	wasmPath := filepath.Join(tempDir, "test.wasm")
-	err = os.WriteFile(wasmPath, wasmBytes, 0644)
+	err := os.WriteFile(wasmPath, wasmBytes, 0644)
 	require.NoError(t, err)
 
 	store := newInMemorySnapshotStore()
@@ -759,12 +752,11 @@ func TestConcurrentExecution(t *testing.T) {
 func TestOplogTruncation(t *testing.T) {
 	instanceID := "test-truncation-instance"
 
-	wasmBytes, err := wasmtime.Wat2Wasm(testdata.OplogTruncationWat)
-	require.NoError(t, err)
+	wasmBytes := testdata.OplogTruncationWasm
 
 	tempDir := t.TempDir()
 	wasmPath := filepath.Join(tempDir, "test.wasm")
-	err = os.WriteFile(wasmPath, wasmBytes, 0644)
+	err := os.WriteFile(wasmPath, wasmBytes, 0644)
 	require.NoError(t, err)
 
 	store := newInMemorySnapshotStore()
@@ -822,13 +814,11 @@ func TestMultiVersionWasmExecution(t *testing.T) {
 	wasmPath1 := filepath.Join(tempDir, "test1.wasm")
 	wasmPath2 := filepath.Join(tempDir, "test2.wasm")
 
-	wasmBytes1, err := wasmtime.Wat2Wasm(testdata.MultiVersionWat1)
-	require.NoError(t, err)
-	err = os.WriteFile(wasmPath1, wasmBytes1, 0644)
+	wasmBytes1 := testdata.MultiVersionWasm1
+	err := os.WriteFile(wasmPath1, wasmBytes1, 0644)
 	require.NoError(t, err)
 
-	wasmBytes2, err := wasmtime.Wat2Wasm(testdata.MultiVersionWat2)
-	require.NoError(t, err)
+	wasmBytes2 := testdata.MultiVersionWasm2
 	err = os.WriteFile(wasmPath2, wasmBytes2, 0644)
 	require.NoError(t, err)
 
@@ -875,12 +865,11 @@ func TestExecuteCancellation(t *testing.T) {
 	instanceID := "test-cancel-instance"
 	serverAddr := "localhost:18085"
 
-	wasmBytes, err := wasmtime.Wat2Wasm(testdata.ExecuteCancellationWat)
-	require.NoError(t, err)
+	wasmBytes := testdata.ExecuteCancellationWasm
 
 	tempDir := t.TempDir()
 	wasmPath := filepath.Join(tempDir, "test.wasm")
-	err = os.WriteFile(wasmPath, wasmBytes, 0644)
+	err := os.WriteFile(wasmPath, wasmBytes, 0644)
 	require.NoError(t, err)
 
 	store := newInMemorySnapshotStore()
@@ -963,12 +952,11 @@ func (e *ErrorInjectingStore) SaveMetadata(meta *InstanceMeta) (bool, error) {
 func TestStorageErrorInjection(t *testing.T) {
 	instanceID := "test-error-injection-instance"
 
-	wasmBytes, err := wasmtime.Wat2Wasm(testdata.StorageErrorInjectionWat)
-	require.NoError(t, err)
+	wasmBytes := testdata.StorageErrorInjectionWasm
 
 	tempDir := t.TempDir()
 	wasmPath := filepath.Join(tempDir, "test.wasm")
-	err = os.WriteFile(wasmPath, wasmBytes, 0644)
+	err := os.WriteFile(wasmPath, wasmBytes, 0644)
 	require.NoError(t, err)
 
 	sqliteStore := newInMemorySnapshotStore()
@@ -1003,12 +991,11 @@ func TestStorageErrorInjection(t *testing.T) {
 }
 
 func TestSoakStressTesting(t *testing.T) {
-	wasmBytes, err := wasmtime.Wat2Wasm(testdata.SoakStressWat)
-	require.NoError(t, err)
+	wasmBytes := testdata.SoakStressWasm
 
 	tempDir := t.TempDir()
 	wasmPath := filepath.Join(tempDir, "test.wasm")
-	err = os.WriteFile(wasmPath, wasmBytes, 0644)
+	err := os.WriteFile(wasmPath, wasmBytes, 0644)
 	require.NoError(t, err)
 
 	store := newInMemorySnapshotStore()

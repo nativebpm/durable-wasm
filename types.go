@@ -9,7 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/bytecodealliance/wasmtime-go/v20"
+	"github.com/tetratelabs/wazero"
+	"github.com/tetratelabs/wazero/api"
 )
 
 var (
@@ -64,8 +65,8 @@ type SnapshotStore interface {
 
 // Engine coordinates execution, compilation, and snapshotting of WASM modules.
 type Engine struct {
-	wasmEngine *wasmtime.Engine
-	module     *wasmtime.Module
+	runtime    wazero.Runtime
+	compiled   wazero.CompiledModule
 	store      SnapshotStore
 	httpClient *http.Client
 	wasmHash   string
@@ -75,8 +76,8 @@ type Engine struct {
 type Session struct {
 	engine                  *Engine
 	ctx                     context.Context
-	store                   *wasmtime.Store
-	memory                  *wasmtime.Memory
+	mod                     api.Module
+	memory                  api.Memory
 	instanceID              string
 	serverAddr              string
 	shouldCrashOnCheckpoint bool

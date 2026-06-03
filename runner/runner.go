@@ -177,3 +177,4 @@ func (c *APICall) WithPayload(payload []byte) *APICall {
 func (c *APICall) Send() ([]byte, error) {
 	return CallAPI(c.name, c.payload)
 }
+

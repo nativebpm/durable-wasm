@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"unsafe"
 
 	"github.com/nativebpm/httpstream"
 )
@@ -16,9 +15,12 @@ func (s *Session) handleDownload(ptr int32, length int32) int32 {
 		return 0
 	}
 
-	mPtr := s.memory.Data(s.store)
-	mSize := s.memory.DataSize(s.store)
-	memoryBytes := unsafe.Slice((*byte)(mPtr), mSize)
+	size := s.memory.Size()
+	memoryBytes, ok := s.memory.Read(0, size)
+	if !ok {
+		slog.Error("[ENGINE] Failed to read memory in handleDownload")
+		return -1
+	}
 
 	// Validate bounds before copy
 	if ptr < 0 || length < 0 || int(ptr)+int(length) > len(memoryBytes) {
@@ -40,7 +42,7 @@ func (s *Session) handleDownload(ptr int32, length int32) int32 {
 	buf := make([]byte, length)
 	n, err := s.downloadResp.Body.Read(buf)
 	if n > 0 {
-		copy(memoryBytes[ptr:ptr+int32(n)], buf[:n])
+		s.memory.Write(uint32(ptr), buf[:n])
 	}
 
 	if err == io.EOF {
@@ -62,9 +64,12 @@ func (s *Session) handleDownload(ptr int32, length int32) int32 {
 }
 
 func (s *Session) handleUpload(ptr int32, length int32) int32 {
-	mPtr := s.memory.Data(s.store)
-	mSize := s.memory.DataSize(s.store)
-	memoryBytes := unsafe.Slice((*byte)(mPtr), mSize)
+	size := s.memory.Size()
+	memoryBytes, ok := s.memory.Read(0, size)
+	if !ok {
+		slog.Error("[ENGINE] Failed to read memory in handleUpload")
+		return -1
+	}
 
 	// Validate bounds before access
 	if ptr < 0 || length < 0 || int(ptr)+int(length) > len(memoryBytes) {
