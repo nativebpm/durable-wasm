@@ -9,9 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -376,6 +374,7 @@ func (s *S3SnapshotStore) Delete(id string) error {
 		fmt.Sprintf("instances/%s/deltas.json", id),
 		fmt.Sprintf("instances/%s/oplog.json", id),
 		fmt.Sprintf("instances/%s/meta.json", id),
+		fmt.Sprintf("instances/%s/active.json", id),
 	}
 
 	for _, key := range keys {
@@ -390,90 +389,86 @@ func (s *S3SnapshotStore) Delete(id string) error {
 	return nil
 }
 
-// UpdateActiveIndex updates the global active index file on S3 using OCC (If-Match ETag).
+// UpdateActiveIndex updates the active instance index status.
 func (s *S3SnapshotStore) UpdateActiveIndex(id string, info []byte, completed bool) error {
-	key := "instances/active_index.json"
-	maxRetries := 5
-
-	var lastErr error
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		// 1. Read existing index
-		data, etag, err := s.readObject(key)
-		var index []map[string]interface{}
-
-		if err != nil && !isNotFound(err) {
-			lastErr = fmt.Errorf("failed to read active index from S3: %w", err)
-			slog.Warn("[S3 STORE] Temporary read active index failure, retrying...", "attempt", attempt+1, "error", err)
-			time.Sleep(time.Duration(10+attempt*20) * time.Millisecond)
-			continue
-		}
-		if err == nil {
-			_ = json.Unmarshal(data, &index)
-		}
-
-		// 2. Parse new info
-		var newInfo map[string]interface{}
-		if err = json.Unmarshal(info, &newInfo); err != nil {
-			return fmt.Errorf("failed to unmarshal new index info: %w", err)
-		}
-
-		// 3. Update index slice
-		updated := false
-		nextIndex := make([]map[string]interface{}, 0)
-		for _, entry := range index {
-			if entry["instance_id"] == id {
-				if !completed {
-					nextIndex = append(nextIndex, newInfo)
-					updated = true
-				}
-			} else {
-				nextIndex = append(nextIndex, entry)
-			}
-		}
-		if !updated && !completed {
-			nextIndex = append(nextIndex, newInfo)
-		}
-
-		// 4. Serialize back
-		newData, err := json.Marshal(nextIndex)
-		if err != nil {
-			return fmt.Errorf("failed to marshal active index: %w", err)
-		}
-
-		// 5. Atomic write with IfMatch or IfNoneMatch
-		input := &s3.PutObjectInput{
+	key := fmt.Sprintf("instances/%s/active.json", id)
+	if completed {
+		_, err := s.Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
 			Bucket: aws.String(s.bucket),
 			Key:    aws.String(key),
-			Body:   bytes.NewReader(newData),
+		})
+		if err != nil && !isNotFound(err) {
+			return fmt.Errorf("failed to delete active status for %s from S3: %w", id, err)
 		}
-		if etag == "" {
-			input.IfNoneMatch = aws.String("*")
-		} else {
-			input.IfMatch = aws.String(etag)
-		}
-
-		_, err = s.Client.PutObject(context.Background(), input)
-		if err == nil {
-			return nil // Success!
-		}
-
-		lastErr = fmt.Errorf("failed to write active index to S3: %w", err)
-		slog.Warn("[S3 STORE] Temporary write active index failure (OCC or network), retrying...", "attempt", attempt+1, "error", err)
-		time.Sleep(time.Duration(10+attempt*20) * time.Millisecond)
+		return nil
 	}
 
-	return fmt.Errorf("failed to update active index on S3 after %d attempts: %w", maxRetries, lastErr)
+	_, err := s.Client.PutObject(context.Background(), &s3.PutObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+		Body:   bytes.NewReader(info),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to write active status for %s to S3: %w", id, err)
+	}
+	return nil
 }
 
-// LoadActiveIndex loads the global active index file from S3.
+// LoadActiveIndex loads the compiled active index list from S3.
 func (s *S3SnapshotStore) LoadActiveIndex() ([]byte, error) {
-	key := "instances/active_index.json"
-	data, _, err := s.readObject(key)
-	if err != nil {
-		if isNotFound(err) {
-			return []byte("[]"), nil
-		}
-		return nil, fmt.Errorf("failed to load active index from S3: %w", err)
+	input := &s3.ListObjectsV2Input{
+		Bucket: aws.String(s.bucket),
+		Prefix: aws.String("instances/"),
 	}
-	return data, nil
+
+	var keys []string
+	paginator := s3.NewListObjectsV2Paginator(s.Client, input)
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("failed to list instances prefix: %w", err)
+		}
+		for _, obj := range page.Contents {
+			if obj.Key != nil && strings.HasSuffix(*obj.Key, "/active.json") {
+				keys = append(keys, *obj.Key)
+			}
+		}
+	}
+
+	if len(keys) == 0 {
+		return []byte("[]"), nil
+	}
+
+	// Fetch active.json objects in parallel
+	type result struct {
+		data []byte
+		err  error
+	}
+
+	resChan := make(chan result, len(keys))
+	for _, key := range keys {
+		go func(k string) {
+			data, _, err := s.readObject(k)
+			resChan <- result{data: data, err: err}
+		}(key)
+	}
+
+	var activeList []map[string]interface{}
+	for i := 0; i < len(keys); i++ {
+		res := <-resChan
+		if res.err != nil {
+			return nil, fmt.Errorf("failed to read active instance info: %w", res.err)
+		}
+		var item map[string]interface{}
+		if err := json.Unmarshal(res.data, &item); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal active instance info: %w", err)
+		}
+		activeList = append(activeList, item)
+	}
+
+	resultBytes, err := json.Marshal(activeList)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal compiled active index: %w", err)
+	}
+	return resultBytes, nil
 }

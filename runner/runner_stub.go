@@ -97,3 +97,8 @@ func (c *APICall) Send() ([]byte, error) {
 	return nil, errOnlySupportedInWASM
 }
 
+// RunTask stub
+func RunTask(handler func(vars map[string]interface{}) error) int32 {
+	panic("RunTask is only supported when executing inside a WebAssembly environment")
+}
+

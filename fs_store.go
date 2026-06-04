@@ -21,6 +21,7 @@ var _ SnapshotStore = (*FileSnapshotStore)(nil)
 func (f *FileSnapshotStore) Save(id string, snapshot []byte) error {
 	path := fmt.Sprintf("%s.bin", id)
 	if f.Dir != "" {
+		_ = os.MkdirAll(f.Dir, 0755)
 		path = fmt.Sprintf("%s/%s.bin", f.Dir, id)
 	}
 	return os.WriteFile(path, snapshot, 0644)
@@ -42,6 +43,7 @@ func (f *FileSnapshotStore) Load(id string) ([]byte, error) {
 func (f *FileSnapshotStore) SaveDeltas(id string, deltas map[int][]byte) error {
 	path := fmt.Sprintf("%s_deltas.json", id)
 	if f.Dir != "" {
+		_ = os.MkdirAll(f.Dir, 0755)
 		path = fmt.Sprintf("%s/%s_deltas.json", f.Dir, id)
 	}
 	current := make(map[int][]byte)
@@ -88,6 +90,7 @@ func (f *FileSnapshotStore) TruncateDeltas(id string) error {
 func (f *FileSnapshotStore) SaveOplog(id string, callIndex int, apiName string, request []byte, response []byte) error {
 	path := fmt.Sprintf("%s_oplog.json", id)
 	if f.Dir != "" {
+		_ = os.MkdirAll(f.Dir, 0755)
 		path = fmt.Sprintf("%s/%s_oplog.json", f.Dir, id)
 	}
 	var list []OplogEntry
@@ -157,6 +160,7 @@ func (f *FileSnapshotStore) TruncateOplog(id string, beforeCallIndex int) error 
 func (f *FileSnapshotStore) SaveMetadata(meta *InstanceMeta) (bool, error) {
 	path := fmt.Sprintf("%s_meta.json", meta.InstanceID)
 	if f.Dir != "" {
+		_ = os.MkdirAll(f.Dir, 0755)
 		path = fmt.Sprintf("%s/%s_meta.json", f.Dir, meta.InstanceID)
 	}
 	var existing InstanceMeta
@@ -228,6 +232,7 @@ func (f *FileSnapshotStore) Delete(id string) error {
 func (f *FileSnapshotStore) SaveWasm(hash string, wasmBytes []byte) error {
 	path := fmt.Sprintf("wasm_%s.wasm", hash)
 	if f.Dir != "" {
+		_ = os.MkdirAll(f.Dir, 0755)
 		path = fmt.Sprintf("%s/wasm_%s.wasm", f.Dir, hash)
 	}
 	if _, err := os.Stat(path); err == nil {
@@ -251,6 +256,7 @@ func (f *FileSnapshotStore) UpdateActiveIndex(id string, info []byte, completed 
 
 	path := "active_index.json"
 	if f.Dir != "" {
+		_ = os.MkdirAll(f.Dir, 0755)
 		path = fmt.Sprintf("%s/active_index.json", f.Dir)
 	}
 

@@ -17,10 +17,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
-	"github.com/nativebpm/wasman/testdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// loadTestWasm reads a compiled WASM file from testdata/ directory.
+func loadTestWasm(t *testing.T, name string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", name+".wasm"))
+	require.NoError(t, err, "failed to load testdata/%s.wasm", name)
+	return data
+}
 
 type inMemorySnapshotStore struct {
 	mu          sync.RWMutex
@@ -327,7 +334,7 @@ func TestDurableExecutionLifecycle(t *testing.T) {
 func TestDirtyPageAndOplog(t *testing.T) {
 	instanceID := "test-dirty-oplog-instance"
 
-	wasmBytes := testdata.DirtyPageOplogWasm
+	wasmBytes := loadTestWasm(t, "dirty_page_oplog")
 
 	tempDir := t.TempDir()
 	wasmPath := filepath.Join(tempDir, "test.wasm")
@@ -529,7 +536,7 @@ func TestS3SnapshotStore(t *testing.T) {
 func TestHostGetTime(t *testing.T) {
 	instanceID := "test-time-instance"
 
-	wasmBytes := testdata.HostGetTimeWasm
+	wasmBytes := loadTestWasm(t, "host_get_time")
 
 	tempDir := t.TempDir()
 	wasmPath := filepath.Join(tempDir, "test.wasm")
@@ -588,7 +595,7 @@ func TestHostGetTime(t *testing.T) {
 func TestMultiCheckpointRecovery(t *testing.T) {
 	instanceID := "test-multi-checkpoint-instance"
 
-	wasmBytes := testdata.MultiCheckpointWasm
+	wasmBytes := loadTestWasm(t, "multi_checkpoint")
 
 	tempDir := t.TempDir()
 	wasmPath := filepath.Join(tempDir, "test.wasm")
@@ -627,12 +634,12 @@ func TestMultiCheckpointRecovery(t *testing.T) {
 		snapshot, err := store.Load(instanceID)
 		
 		val := int32(0)
-		if len(deltas) > 0 && len(deltas[0]) >= 4 {
-			val = int32(deltas[0][0]) | int32(deltas[0][1])<<8 | int32(deltas[0][2])<<16 | int32(deltas[0][3])<<24
-		} else if len(snapshot) >= 4 {
-			val = int32(snapshot[0]) | int32(snapshot[1])<<8 | int32(snapshot[2])<<16 | int32(snapshot[3])<<24
+		if len(deltas) > 0 && len(deltas[0]) >= 12 {
+			val = int32(deltas[0][8]) | int32(deltas[0][9])<<8 | int32(deltas[0][10])<<16 | int32(deltas[0][11])<<24
+		} else if len(snapshot) >= 12 {
+			val = int32(snapshot[8]) | int32(snapshot[9])<<8 | int32(snapshot[10])<<16 | int32(snapshot[11])<<24
 		}
-		assert.Equal(t, int32(expectedVal), val, "Memory at offset 0 should contain expected progress value")
+		assert.Equal(t, int32(expectedVal), val, "Memory at offset 8 should contain expected progress value")
 	}
 }
 
@@ -643,11 +650,11 @@ func TestWasmModuleHashMismatch(t *testing.T) {
 	wasmPath1 := filepath.Join(tempDir, "test1.wasm")
 	wasmPath2 := filepath.Join(tempDir, "test2.wasm")
 
-	wasmBytes1 := testdata.HashMismatchWasm1
+	wasmBytes1 := loadTestWasm(t, "hash_mismatch_1")
 	err := os.WriteFile(wasmPath1, wasmBytes1, 0644)
 	require.NoError(t, err)
 
-	wasmBytes2 := testdata.HashMismatchWasm2
+	wasmBytes2 := loadTestWasm(t, "hash_mismatch_2")
 	err = os.WriteFile(wasmPath2, wasmBytes2, 0644)
 	require.NoError(t, err)
 
@@ -691,7 +698,7 @@ func TestConcurrentExecution(t *testing.T) {
 	instanceID := "test-concurrent-instance"
 	serverAddr := "localhost:18084"
 
-	wasmBytes := testdata.ConcurrentExecutionWasm
+	wasmBytes := loadTestWasm(t, "concurrent_execution")
 
 	tempDir := t.TempDir()
 	wasmPath := filepath.Join(tempDir, "test.wasm")
@@ -752,7 +759,7 @@ func TestConcurrentExecution(t *testing.T) {
 func TestOplogTruncation(t *testing.T) {
 	instanceID := "test-truncation-instance"
 
-	wasmBytes := testdata.OplogTruncationWasm
+	wasmBytes := loadTestWasm(t, "oplog_truncation")
 
 	tempDir := t.TempDir()
 	wasmPath := filepath.Join(tempDir, "test.wasm")
@@ -814,11 +821,11 @@ func TestMultiVersionWasmExecution(t *testing.T) {
 	wasmPath1 := filepath.Join(tempDir, "test1.wasm")
 	wasmPath2 := filepath.Join(tempDir, "test2.wasm")
 
-	wasmBytes1 := testdata.MultiVersionWasm1
+	wasmBytes1 := loadTestWasm(t, "multi_version_1")
 	err := os.WriteFile(wasmPath1, wasmBytes1, 0644)
 	require.NoError(t, err)
 
-	wasmBytes2 := testdata.MultiVersionWasm2
+	wasmBytes2 := loadTestWasm(t, "multi_version_2")
 	err = os.WriteFile(wasmPath2, wasmBytes2, 0644)
 	require.NoError(t, err)
 
@@ -855,8 +862,8 @@ func TestMultiVersionWasmExecution(t *testing.T) {
 	require.NoError(t, err)
 
 	val := int32(0)
-	if len(deltas) > 0 && len(deltas[0]) >= 4 {
-		val = int32(deltas[0][0]) | int32(deltas[0][1])<<8 | int32(deltas[0][2])<<16 | int32(deltas[0][3])<<24
+	if len(deltas) > 0 && len(deltas[0]) >= 12 {
+		val = int32(deltas[0][8]) | int32(deltas[0][9])<<8 | int32(deltas[0][10])<<16 | int32(deltas[0][11])<<24
 	}
 	assert.Equal(t, int32(888), val, "Should execute wat1 code and write 888")
 }
@@ -865,7 +872,7 @@ func TestExecuteCancellation(t *testing.T) {
 	instanceID := "test-cancel-instance"
 	serverAddr := "localhost:18085"
 
-	wasmBytes := testdata.ExecuteCancellationWasm
+	wasmBytes := loadTestWasm(t, "execute_cancellation")
 
 	tempDir := t.TempDir()
 	wasmPath := filepath.Join(tempDir, "test.wasm")
@@ -952,7 +959,7 @@ func (e *ErrorInjectingStore) SaveMetadata(meta *InstanceMeta) (bool, error) {
 func TestStorageErrorInjection(t *testing.T) {
 	instanceID := "test-error-injection-instance"
 
-	wasmBytes := testdata.StorageErrorInjectionWasm
+	wasmBytes := loadTestWasm(t, "storage_error_injection")
 
 	tempDir := t.TempDir()
 	wasmPath := filepath.Join(tempDir, "test.wasm")
@@ -991,7 +998,7 @@ func TestStorageErrorInjection(t *testing.T) {
 }
 
 func TestSoakStressTesting(t *testing.T) {
-	wasmBytes := testdata.SoakStressWasm
+	wasmBytes := loadTestWasm(t, "soak_stress")
 
 	tempDir := t.TempDir()
 	wasmPath := filepath.Join(tempDir, "test.wasm")
@@ -1095,3 +1102,69 @@ func testStoreActiveIndex(t *testing.T, store SnapshotStore) {
 	require.Len(t, list, 1)
 	assert.Equal(t, "inst-2", list[0]["instance_id"])
 }
+
+func TestNewEngineWithBytes_SafeTask(t *testing.T) {
+	instanceID := "test-safe-task-instance"
+	serverAddr := "localhost:18099"
+
+	// Mock server state
+	var receivedVars map[string]interface{}
+
+	// Setup mock HTTP server
+	mux := http.NewServeMux()
+	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"item": "out_of_stock_item",
+		})
+	})
+
+	mux.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
+		err := json.NewDecoder(r.Body).Decode(&receivedVars)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	})
+
+	server := &http.Server{
+		Addr:    serverAddr,
+		Handler: mux,
+	}
+
+	ln, err := net.Listen("tcp", serverAddr)
+	require.NoError(t, err)
+
+	go func() {
+		_ = server.Serve(ln)
+	}()
+	defer server.Shutdown(context.Background())
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Read compiled task.wasm
+	wasmPath := filepath.Join("examples", "safe-task", "task.wasm")
+	wasmBytes, err := os.ReadFile(wasmPath)
+	require.NoError(t, err, "task.wasm must be built first. Run GOOS=wasip1 GOARCH=wasm go build -o task.wasm inside examples/safe-task")
+
+	store := newInMemorySnapshotStore()
+
+	// Initialize using NewEngineWithBytes
+	engine, err := NewEngineWithBytes(wasmBytes, store)
+	require.NoError(t, err)
+
+	crashed, err := engine.Session(instanceID).
+		WithServer(serverAddr).
+		WithCrash(false).
+		Run(context.Background())
+	require.NoError(t, err)
+	assert.False(t, crashed)
+
+	// Verify updated variables
+	require.NotNil(t, receivedVars)
+	assert.Equal(t, "out_of_stock_item", receivedVars["item"])
+	assert.Equal(t, false, receivedVars["in_stock"])
+}
+

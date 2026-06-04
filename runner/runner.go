@@ -3,6 +3,7 @@
 package runner
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"time"
@@ -176,5 +177,33 @@ func (c *APICall) WithPayload(payload []byte) *APICall {
 // Send executes the API call deterministically and returns the response.
 func (c *APICall) Send() ([]byte, error) {
 	return CallAPI(c.name, c.payload)
+}
+
+// RunTask loads process variables from host, passes them to handler,
+// serializes them back, and closes the writer.
+// Suitable for single-purpose tasks where you only write business logic on variables.
+func RunTask(handler func(vars map[string]interface{}) error) int32 {
+	vars := make(map[string]interface{})
+	if err := json.NewDecoder(Reader).Decode(&vars); err != nil {
+		println("[WASMAN ERROR] failed to decode task variables:", err.Error())
+		return -1
+	}
+
+	if err := handler(vars); err != nil {
+		println("[WASMAN ERROR] task handler failed:", err.Error())
+		return -1
+	}
+
+	if err := json.NewEncoder(Writer).Encode(vars); err != nil {
+		println("[WASMAN ERROR] failed to encode task variables:", err.Error())
+		return -1
+	}
+
+	if err := Writer.Close(); err != nil {
+		println("[WASMAN ERROR] failed to close task writer:", err.Error())
+		return -1
+	}
+
+	return 0
 }
 
