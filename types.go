@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/tetratelabs/wazero"
@@ -64,11 +65,13 @@ type SnapshotStore interface {
 
 // Engine coordinates execution, compilation, and snapshotting of WASM modules.
 type Engine struct {
-	runtime    wazero.Runtime
-	compiled   wazero.CompiledModule
-	store      SnapshotStore
-	httpClient *http.Client
-	wasmHash   string
+	runtime       wazero.Runtime
+	compiled      wazero.CompiledModule
+	store         SnapshotStore
+	httpClient    *http.Client
+	wasmHash      string
+	compiledCache map[string]wazero.CompiledModule
+	cacheMu       sync.RWMutex
 }
 
 // Session tracks the dynamic execution state of a running WASM instance.

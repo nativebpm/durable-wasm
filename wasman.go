@@ -327,12 +327,14 @@ func NewEngineWithBytes(wasmBytes []byte, store SnapshotStore, opts ...EngineOpt
 	}
 
 	engine := &Engine{
-		runtime:    runtime,
-		compiled:   compiled,
-		store:      store,
-		wasmHash:   wasmHash,
-		httpClient: defaultHTTPClient,
+		runtime:       runtime,
+		compiled:      compiled,
+		store:         store,
+		wasmHash:      wasmHash,
+		httpClient:    defaultHTTPClient,
+		compiledCache: make(map[string]wazero.CompiledModule),
 	}
+	engine.compiledCache[wasmHash] = compiled
 
 	for _, opt := range opts {
 		opt(engine)
@@ -357,20 +359,34 @@ func (e *Engine) Execute(ctx context.Context, instanceID string, entrypoint stri
 
 	var runModule wazero.CompiledModule
 	var errCompile error
-	var needCloseModule bool
 
 	if meta != nil {
 		if meta.WasmHash != e.wasmHash {
-			slog.Info("[ENGINE] Instance requires a different WASM module version", "instance_id", instanceID, "required_hash", meta.WasmHash, "current_hash", e.wasmHash)
-			loadedBytes, err := e.store.LoadWasm(meta.WasmHash)
-			if err != nil {
-				return false, fmt.Errorf("failed to load required WASM version %s from registry: %w: %w", meta.WasmHash, err, ErrWasmVersionMismatch)
+			e.cacheMu.RLock()
+			cachedModule, ok := e.compiledCache[meta.WasmHash]
+			e.cacheMu.RUnlock()
+			if ok {
+				runModule = cachedModule
+			} else {
+				slog.Info("[ENGINE] Instance requires a different WASM module version", "instance_id", instanceID, "required_hash", meta.WasmHash, "current_hash", e.wasmHash)
+				loadedBytes, err := e.store.LoadWasm(meta.WasmHash)
+				if err != nil {
+					return false, fmt.Errorf("failed to load required WASM version %s from registry: %w: %w", meta.WasmHash, err, ErrWasmVersionMismatch)
+				}
+
+				e.cacheMu.Lock()
+				if cachedModule, ok = e.compiledCache[meta.WasmHash]; ok {
+					runModule = cachedModule
+				} else {
+					runModule, errCompile = e.runtime.CompileModule(ctx, loadedBytes)
+					if errCompile != nil {
+						e.cacheMu.Unlock()
+						return false, fmt.Errorf("failed to compile historical WASM module %s: %w", meta.WasmHash, errCompile)
+					}
+					e.compiledCache[meta.WasmHash] = runModule
+				}
+				e.cacheMu.Unlock()
 			}
-			runModule, errCompile = e.runtime.CompileModule(ctx, loadedBytes)
-			if errCompile != nil {
-				return false, fmt.Errorf("failed to compile historical WASM module %s: %w", meta.WasmHash, errCompile)
-			}
-			needCloseModule = true
 		} else {
 			runModule = e.compiled
 		}
@@ -381,10 +397,6 @@ func (e *Engine) Execute(ctx context.Context, instanceID string, entrypoint stri
 			Version:    0,
 		}
 		runModule = e.compiled
-	}
-
-	if needCloseModule {
-		defer runModule.Close(ctx)
 	}
 
 	session := &Session{
