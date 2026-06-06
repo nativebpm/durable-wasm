@@ -5,7 +5,6 @@ package wasman
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
@@ -88,9 +87,8 @@ type Session struct {
 	pageHashes map[int]uint64
 	callIndex  int
 
-	// Upload Stream-first context
-	uploadPipeW   *io.PipeWriter
-	uploadErrChan chan error
+	// Upload buffer context (Synchronous)
+	uploadBuffer []byte
 
 	// Download Stream-first context
 	downloadResp *http.Response

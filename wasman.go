@@ -401,9 +401,6 @@ func (e *Engine) Execute(ctx context.Context, instanceID string, entrypoint stri
 		if session.downloadResp != nil {
 			session.downloadResp.Body.Close()
 		}
-		if session.uploadPipeW != nil {
-			session.uploadPipeW.Close()
-		}
 	}()
 
 	// Bind session to context

@@ -3,6 +3,7 @@
 package wasman
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log/slog"
@@ -77,54 +78,37 @@ func (s *Session) handleUpload(ptr int32, length int32) int32 {
 		return -1
 	}
 
-	if s.uploadPipeW == nil {
-		url := fmt.Sprintf("http://%s/upload", s.serverAddr)
-		slog.Info("[ENGINE] POST Request (Stream-first via io.Pipe)", "url", url)
-
-		pipeReader, pipeWriter := io.Pipe()
-		s.uploadPipeW = pipeWriter
-		s.uploadErrChan = make(chan error, 1)
-
-		go func() {
-			resp, err := httpstream.NewRequest(s.ctx, *s.engine.httpClient, "POST", url).
-				Body(pipeReader, "application/octet-stream").
-				Send()
-			if err != nil {
-				pipeReader.CloseWithError(err)
-				s.uploadErrChan <- err
-				return
-			}
-			defer resp.Body.Close()
-
-			_, _ = io.Copy(io.Discard, resp.Body)
-			s.uploadErrChan <- nil
-		}()
-	}
-
 	if length == 0 {
-		slog.Info("[ENGINE] Closing upload stream (EOF). Waiting for response")
-		s.uploadPipeW.Close()
-		err := <-s.uploadErrChan
-		s.uploadPipeW = nil
+		if len(s.uploadBuffer) == 0 {
+			return 0
+		}
+
+		url := fmt.Sprintf("http://%s/upload", s.serverAddr)
+		slog.Info("[ENGINE] POST Request (Synchronous at EOF)", "url", url, "size", len(s.uploadBuffer))
+
+		resp, err := httpstream.NewRequest(s.ctx, *s.engine.httpClient, "POST", url).
+			Body(io.NopCloser(bytes.NewReader(s.uploadBuffer)), "application/octet-stream").
+			Send()
+
+		s.uploadBuffer = nil
 
 		// Reset download stream state to allow next download requests
 		s.downloadResp = nil
 		s.downloadEOF = false
 
 		if err != nil {
-			slog.Error("[ENGINE] POST failed", "error", err)
+			slog.Error("[ENGINE] Synchronous POST failed", "error", err)
 			return -1
 		}
-		slog.Info("[ENGINE] POST completed successfully")
+		defer resp.Body.Close()
+
+		_, _ = io.Copy(io.Discard, resp.Body)
+		slog.Info("[ENGINE] Synchronous POST completed successfully")
 		return 0
 	}
 
 	dataToWrite := memoryBytes[ptr : ptr+length]
-	n, err := s.uploadPipeW.Write(dataToWrite)
-	if err != nil {
-		slog.Error("[ENGINE] Write to pipe failed", "error", err)
-		return -1
-	}
+	s.uploadBuffer = append(s.uploadBuffer, dataToWrite...)
 
-	return int32(n)
+	return int32(length)
 }

@@ -1,7 +1,5 @@
 module wasman-testdata
 
-go 1.21
+go 1.26
 
-require (
-	github.com/nativebpm/wasman/runner v0.0.1
-)
+require github.com/nativebpm/wasman/runner v0.0.1
