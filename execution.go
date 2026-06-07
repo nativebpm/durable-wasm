@@ -13,6 +13,7 @@ type Execution struct {
 	entrypoint  string
 	serverAddr  string
 	shouldCrash bool
+	params      []uint64
 }
 
 // Session creates a new Execution builder for the specified WASM instance.
@@ -42,7 +43,13 @@ func (ex *Execution) WithCrash(shouldCrash bool) *Execution {
 	return ex
 }
 
+// WithArgs configures the parameters to pass to the WASM function.
+func (ex *Execution) WithArgs(params ...uint64) *Execution {
+	ex.params = params
+	return ex
+}
+
 // Run executes the WASM instance with the configured session options.
 func (ex *Execution) Run(ctx context.Context) (crashed bool, err error) {
-	return ex.engine.Execute(ctx, ex.instanceID, ex.entrypoint, ex.serverAddr, ex.shouldCrash)
+	return ex.engine.ExecuteWithArgs(ctx, ex.instanceID, ex.entrypoint, ex.serverAddr, ex.shouldCrash, ex.params...)
 }

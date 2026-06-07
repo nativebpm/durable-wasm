@@ -1168,3 +1168,71 @@ func TestNewEngineWithBytes_SafeTask(t *testing.T) {
 	assert.Equal(t, false, receivedVars["in_stock"])
 }
 
+func TestFileSnapshotStore_Compression(t *testing.T) {
+	tempDir := t.TempDir()
+	store := &FileSnapshotStore{
+		Dir:         tempDir,
+		Compression: true,
+	}
+
+	instanceID := "test-comp-inst"
+
+	// 1. Save snapshot & Verify gzip magic bytes on disk
+	snapshotData := []byte("a very repetitive string that compresses extremely well! a very repetitive string that compresses extremely well!")
+	err := store.Save(instanceID, snapshotData)
+	require.NoError(t, err)
+
+	diskPath := filepath.Join(tempDir, instanceID+".bin")
+	diskBytes, err := os.ReadFile(diskPath)
+	require.NoError(t, err)
+	assert.True(t, isGzipped(diskBytes), "Saved file must be gzipped")
+
+	// 2. Load snapshot & Verify decompression
+	loaded, err := store.Load(instanceID)
+	require.NoError(t, err)
+	assert.Equal(t, snapshotData, loaded)
+
+	// 3. Save & Load deltas with compression
+	deltas := map[int][]byte{
+		1: []byte("delta-1-val"),
+		2: []byte("delta-2-val"),
+	}
+	err = store.SaveDeltas(instanceID, deltas)
+	require.NoError(t, err)
+
+	deltasPath := filepath.Join(tempDir, instanceID+"_deltas.json")
+	deltasBytes, err := os.ReadFile(deltasPath)
+	require.NoError(t, err)
+	assert.True(t, isGzipped(deltasBytes), "Deltas file must be gzipped")
+
+	loadedDeltas, err := store.LoadDeltas(instanceID)
+	require.NoError(t, err)
+	assert.Len(t, loadedDeltas, 2)
+	assert.Equal(t, []byte("delta-1-val"), loadedDeltas[1])
+
+	// 4. Save & Load oplog with compression
+	err = store.SaveOplog(instanceID, 1, "test-api", []byte("req"), []byte("resp"))
+	require.NoError(t, err)
+
+	oplogPath := filepath.Join(tempDir, instanceID+"_oplog.json")
+	oplogBytes, err := os.ReadFile(oplogPath)
+	require.NoError(t, err)
+	assert.True(t, isGzipped(oplogBytes), "Oplog file must be gzipped")
+
+	loadedOplog, err := store.LoadOplog(instanceID)
+	require.NoError(t, err)
+	require.Len(t, loadedOplog, 1)
+	assert.Equal(t, "test-api", loadedOplog[0].ApiName)
+
+	// 5. Test Backwards Compatibility (reading uncompressed files)
+	uncompressedPath := filepath.Join(tempDir, "uncomp-snapshot.bin")
+	uncompressedData := []byte("uncompressed-snapshot-bytes")
+	err = os.WriteFile(uncompressedPath, uncompressedData, 0644)
+	require.NoError(t, err)
+
+	loadedUncomp, err := store.Load("uncomp-snapshot")
+	require.NoError(t, err)
+	assert.Equal(t, uncompressedData, loadedUncomp, "Must load uncompressed legacy snapshots cleanly")
+}
+
+

@@ -19,8 +19,9 @@ import (
 
 // S3SnapshotStore implements SnapshotStore using an S3-compatible object store.
 type S3SnapshotStore struct {
-	Client *s3.Client
-	bucket string
+	Client      *s3.Client
+	bucket      string
+	Compression bool
 }
 
 var _ SnapshotStore = (*S3SnapshotStore)(nil)
@@ -115,7 +116,15 @@ func (s *S3SnapshotStore) writeObject(key string, data []byte) (string, error) {
 // Save writes a full memory snapshot to S3.
 func (s *S3SnapshotStore) Save(id string, snapshot []byte) error {
 	key := fmt.Sprintf("instances/%s/snapshot.bin", id)
-	_, err := s.writeObject(key, snapshot)
+	data := snapshot
+	if s.Compression {
+		var err error
+		data, err = compressData(snapshot)
+		if err != nil {
+			return fmt.Errorf("failed to compress snapshot for '%s': %w", id, err)
+		}
+	}
+	_, err := s.writeObject(key, data)
 	if err != nil {
 		return fmt.Errorf("failed to save snapshot for '%s': %w", id, err)
 	}
@@ -129,7 +138,7 @@ func (s *S3SnapshotStore) Load(id string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return data, nil
+	return decompressData(data)
 }
 
 // SaveDeltas saves memory deltas to S3 by reading current, overlaying new ones and writing back.
@@ -139,7 +148,10 @@ func (s *S3SnapshotStore) SaveDeltas(id string, deltas map[int][]byte) error {
 
 	data, _, err := s.readObject(key)
 	if err == nil {
-		_ = json.Unmarshal(data, &current)
+		decompressed, err := decompressData(data)
+		if err == nil {
+			_ = json.Unmarshal(decompressed, &current)
+		}
 	} else if !isNotFound(err) {
 		return fmt.Errorf("failed to read deltas from S3: %w", err)
 	}
@@ -151,6 +163,13 @@ func (s *S3SnapshotStore) SaveDeltas(id string, deltas map[int][]byte) error {
 	newData, err := json.Marshal(current)
 	if err != nil {
 		return fmt.Errorf("failed to marshal deltas: %w", err)
+	}
+
+	if s.Compression {
+		newData, err = compressData(newData)
+		if err != nil {
+			return fmt.Errorf("failed to compress deltas: %w", err)
+		}
 	}
 
 	_, err = s.writeObject(key, newData)
@@ -171,8 +190,13 @@ func (s *S3SnapshotStore) LoadDeltas(id string) (map[int][]byte, error) {
 		return nil, fmt.Errorf("failed to load deltas from S3: %w", err)
 	}
 
+	decompressed, err := decompressData(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decompress deltas from S3: %w", err)
+	}
+
 	var deltas map[int][]byte
-	err = json.Unmarshal(data, &deltas)
+	err = json.Unmarshal(decompressed, &deltas)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal deltas: %w", err)
 	}
@@ -199,7 +223,10 @@ func (s *S3SnapshotStore) SaveOplog(id string, callIndex int, apiName string, re
 
 	data, _, err := s.readObject(key)
 	if err == nil {
-		_ = json.Unmarshal(data, &list)
+		decompressed, err := decompressData(data)
+		if err == nil {
+			_ = json.Unmarshal(decompressed, &list)
+		}
 	} else if !isNotFound(err) {
 		return fmt.Errorf("failed to read oplog from S3: %w", err)
 	}
@@ -214,6 +241,13 @@ func (s *S3SnapshotStore) SaveOplog(id string, callIndex int, apiName string, re
 	newData, err := json.Marshal(list)
 	if err != nil {
 		return fmt.Errorf("failed to marshal oplog: %w", err)
+	}
+
+	if s.Compression {
+		newData, err = compressData(newData)
+		if err != nil {
+			return fmt.Errorf("failed to compress oplog: %w", err)
+		}
 	}
 
 	_, err = s.writeObject(key, newData)
@@ -234,8 +268,13 @@ func (s *S3SnapshotStore) LoadOplog(id string) ([]OplogEntry, error) {
 		return nil, fmt.Errorf("failed to load oplog from S3: %w", err)
 	}
 
+	decompressed, err := decompressData(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decompress oplog from S3: %w", err)
+	}
+
 	var list []OplogEntry
-	err = json.Unmarshal(data, &list)
+	err = json.Unmarshal(decompressed, &list)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal oplog: %w", err)
 	}
@@ -253,8 +292,13 @@ func (s *S3SnapshotStore) TruncateOplog(id string, beforeCallIndex int) error {
 		return fmt.Errorf("failed to read oplog for truncate from S3: %w", err)
 	}
 
+	decompressed, err := decompressData(data)
+	if err != nil {
+		return fmt.Errorf("failed to decompress oplog for truncate from S3: %w", err)
+	}
+
 	var list []OplogEntry
-	if err := json.Unmarshal(data, &list); err != nil {
+	if err := json.Unmarshal(decompressed, &list); err != nil {
 		return fmt.Errorf("failed to unmarshal oplog for truncate: %w", err)
 	}
 
@@ -268,6 +312,13 @@ func (s *S3SnapshotStore) TruncateOplog(id string, beforeCallIndex int) error {
 	newData, err := json.Marshal(filtered)
 	if err != nil {
 		return fmt.Errorf("failed to marshal truncated oplog: %w", err)
+	}
+
+	if s.Compression {
+		newData, err = compressData(newData)
+		if err != nil {
+			return fmt.Errorf("failed to compress truncated oplog: %w", err)
+		}
 	}
 
 	_, err = s.writeObject(key, newData)
@@ -347,7 +398,15 @@ func (s *S3SnapshotStore) LoadMetadata(id string) (*InstanceMeta, error) {
 // SaveWasm saves a WASM module binary by its SHA256 hash.
 func (s *S3SnapshotStore) SaveWasm(hash string, wasmBytes []byte) error {
 	key := fmt.Sprintf("wasm/%s.wasm", hash)
-	_, err := s.writeObject(key, wasmBytes)
+	data := wasmBytes
+	if s.Compression {
+		var err error
+		data, err = compressData(wasmBytes)
+		if err != nil {
+			return fmt.Errorf("failed to compress WASM module %s: %w", hash, err)
+		}
+	}
+	_, err := s.writeObject(key, data)
 	if err != nil {
 		return fmt.Errorf("failed to save WASM module %s to S3: %w", hash, err)
 	}
@@ -364,7 +423,7 @@ func (s *S3SnapshotStore) LoadWasm(hash string) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("failed to load WASM module %s from S3: %w", hash, err)
 	}
-	return data, nil
+	return decompressData(data)
 }
 
 // Delete removes all data associated with the instance from S3.

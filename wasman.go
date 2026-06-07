@@ -270,6 +270,9 @@ func NewEngineWithBytes(wasmBytes []byte, store SnapshotStore, opts ...EngineOpt
 				time.Sleep(10 * time.Millisecond)
 				response = []byte(fmt.Sprintf("resp_for_%s_call_%d", string(request), callIdx))
 			} else {
+				if s.serverAddr == "" {
+					return -1
+				}
 				url := fmt.Sprintf("http://%s/%s", s.serverAddr, apiName)
 				req, err := http.NewRequestWithContext(s.ctx, "POST", url, strings.NewReader(string(request)))
 				if err != nil {
@@ -352,6 +355,11 @@ func (e *Engine) Store() SnapshotStore {
 // Execute runs the WASM instance with a given entrypoint and session context.
 // If it finds a saved snapshot, it automatically restores the linear memory.
 func (e *Engine) Execute(ctx context.Context, instanceID string, entrypoint string, serverAddr string, shouldCrash bool) (bool, error) {
+	return e.ExecuteWithArgs(ctx, instanceID, entrypoint, serverAddr, shouldCrash)
+}
+
+// ExecuteWithArgs runs the WASM instance with a given entrypoint, session context, and variadic parameters.
+func (e *Engine) ExecuteWithArgs(ctx context.Context, instanceID string, entrypoint string, serverAddr string, shouldCrash bool, params ...uint64) (bool, error) {
 	// Load or initialize metadata (WASM Module Versioning & OCC)
 	meta, err := e.store.LoadMetadata(instanceID)
 	if err != nil {
@@ -550,7 +558,7 @@ func (e *Engine) Execute(ctx context.Context, instanceID string, entrypoint stri
 	}
 
 	slog.Info("[ENGINE] Invoking entrypoint", "entrypoint", entrypoint)
-	result, err := runFunc.Call(executeCtx)
+	result, err := runFunc.Call(executeCtx, params...)
 	if executeCtx.Err() != nil {
 		return false, executeCtx.Err()
 	}
@@ -577,3 +585,266 @@ func (e *Engine) Execute(ctx context.Context, instanceID string, entrypoint stri
 
 	return false, nil
 }
+
+// RunBPMN executes the BPMN VM core with the given inputs.
+// It handles instantiation, memory restoration, input writing, execution, and output reading.
+// It returns: crashed (bool), outputBytes ([]byte), error.
+func (e *Engine) RunBPMN(
+	ctx context.Context,
+	instanceID string,
+	entrypoint string, // "execute" or "resume"
+	graphBytes []byte,
+	inputBytes []byte, // variables (for execute) or instanceState (for resume)
+	completedTaskID string, // (for resume only)
+) (bool, []byte, error) {
+	// Load or initialize metadata (WASM Module Versioning & OCC)
+	meta, err := e.store.LoadMetadata(instanceID)
+	if err != nil {
+		return false, nil, fmt.Errorf("failed to load metadata: %w", err)
+	}
+
+	var runModule wazero.CompiledModule
+	var errCompile error
+
+	if meta != nil {
+		if meta.WasmHash != e.wasmHash {
+			e.cacheMu.RLock()
+			cachedModule, ok := e.compiledCache[meta.WasmHash]
+			e.cacheMu.RUnlock()
+			if ok {
+				runModule = cachedModule
+			} else {
+				slog.Info("[ENGINE] Instance requires a different WASM module version", "instance_id", instanceID, "required_hash", meta.WasmHash, "current_hash", e.wasmHash)
+				loadedBytes, err := e.store.LoadWasm(meta.WasmHash)
+				if err != nil {
+					return false, nil, fmt.Errorf("failed to load required WASM version %s from registry: %w: %w", meta.WasmHash, err, ErrWasmVersionMismatch)
+				}
+
+				e.cacheMu.Lock()
+				if cachedModule, ok = e.compiledCache[meta.WasmHash]; ok {
+					runModule = cachedModule
+				} else {
+					runModule, errCompile = e.runtime.CompileModule(ctx, loadedBytes)
+					if errCompile != nil {
+						e.cacheMu.Unlock()
+						return false, nil, fmt.Errorf("failed to compile historical WASM module %s: %w", meta.WasmHash, errCompile)
+					}
+					e.compiledCache[meta.WasmHash] = runModule
+				}
+				e.cacheMu.Unlock()
+			}
+		} else {
+			runModule = e.compiled
+		}
+	} else {
+		meta = &InstanceMeta{
+			InstanceID: instanceID,
+			WasmHash:   e.wasmHash,
+			Version:    0,
+		}
+		runModule = e.compiled
+	}
+
+	session := &Session{
+		engine:                  e,
+		ctx:                     ctx,
+		instanceID:              instanceID,
+		serverAddr:              "",
+		shouldCrashOnCheckpoint: false,
+		meta:                    meta,
+	}
+
+	defer func() {
+		if session.downloadResp != nil {
+			session.downloadResp.Body.Close()
+		}
+	}()
+
+	executeCtx := WithSession(ctx, session)
+
+	config := wazero.NewModuleConfig().
+		WithName(fmt.Sprintf("main-%s", instanceID)).
+		WithStdout(os.Stdout).
+		WithStderr(os.Stderr).
+		WithStartFunctions()
+
+	mod, err := e.runtime.InstantiateModule(executeCtx, runModule, config)
+	if err != nil {
+		slog.Error("[ENGINE] InstantiateModule failed", "error", err)
+		return false, nil, fmt.Errorf("failed to instantiate WASM: %w", err)
+	}
+	defer mod.Close(executeCtx)
+
+	if startFunc := mod.ExportedFunction("_start"); startFunc != nil {
+		if _, err := startFunc.Call(executeCtx); err != nil {
+			var exitErr *sys.ExitError
+			if errors.As(err, &exitErr) && exitErr.ExitCode() == 0 {
+				// TinyGo _start exits with code 0.
+			} else {
+				return false, nil, fmt.Errorf("_start failed: %w", err)
+			}
+		}
+	}
+
+	session.mod = mod
+	session.memory = mod.Memory()
+	session.pageHashes = make(map[int]uint64)
+
+	// Restore memory snapshot
+	snapshot, err := e.store.Load(instanceID)
+	if err == nil && len(snapshot) > 0 {
+		slog.Info("[ENGINE] Found saved full snapshot. Restoring memory...", "instance_id", instanceID)
+		currentPages, _ := session.memory.Grow(0)
+		neededPages := (uint64(len(snapshot)) + 65535) / 65536
+		if uint32(neededPages) > currentPages {
+			growPages := uint32(neededPages) - currentPages
+			_, ok := session.memory.Grow(growPages)
+			if !ok {
+				return false, nil, fmt.Errorf("failed to grow memory for snapshot")
+			}
+		}
+
+		size := session.memory.Size()
+		memoryBytes, ok := session.memory.Read(0, size)
+		if !ok {
+			return false, nil, fmt.Errorf("failed to read memory for snapshot restoration")
+		}
+		copy(memoryBytes, snapshot)
+
+		blockSize := 4096
+		numBlocks := len(memoryBytes) / blockSize
+		for i := 0; i < numBlocks; i++ {
+			start := i * blockSize
+			end := start + blockSize
+			h := fnv.New64a()
+			h.Write(memoryBytes[start:end])
+			session.pageHashes[i] = h.Sum64()
+		}
+	}
+
+	// Apply deltas
+	deltas, err := e.store.LoadDeltas(instanceID)
+	if err == nil && len(deltas) > 0 {
+		slog.Info("[ENGINE] Found saved memory deltas. Applying to memory...", "instance_id", instanceID)
+		maxPageIndex := 0
+		for idx := range deltas {
+			if idx > maxPageIndex {
+				maxPageIndex = idx
+			}
+		}
+		neededSize := (maxPageIndex + 1) * 4096
+		neededPages := (uint64(neededSize) + 65535) / 65536
+		currentPages, _ := session.memory.Grow(0)
+		if uint32(neededPages) > currentPages {
+			growPages := uint32(neededPages) - currentPages
+			_, ok := session.memory.Grow(growPages)
+			if !ok {
+				return false, nil, fmt.Errorf("failed to grow memory for deltas")
+			}
+		}
+
+		size := session.memory.Size()
+		memoryBytes, ok := session.memory.Read(0, size)
+		if !ok {
+			return false, nil, fmt.Errorf("failed to read memory for deltas restoration")
+		}
+
+		for idx, data := range deltas {
+			start := idx * 4096
+			copy(memoryBytes[start:start+len(data)], data)
+			h := fnv.New64a()
+			h.Write(data)
+			session.pageHashes[idx] = h.Sum64()
+		}
+	}
+
+	// Write inputs to exchange buffer
+	getBufPtrFunc := mod.ExportedFunction("get_exchange_buffer_pointer")
+	if getBufPtrFunc == nil {
+		return false, nil, fmt.Errorf("get_exchange_buffer_pointer function not found in WASM VM")
+	}
+	resPtr, err := getBufPtrFunc.Call(executeCtx)
+	if err != nil {
+		return false, nil, fmt.Errorf("failed to call get_exchange_buffer_pointer: %w", err)
+	}
+	bufPtr := uint32(resPtr[0])
+
+	mem := session.memory
+	totalLen := len(graphBytes) + len(inputBytes) + len(completedTaskID)
+	if totalLen > 1024*1024 {
+		return false, nil, fmt.Errorf("inputs size exceeds WASM exchange buffer limit of 1MB")
+	}
+
+	ok := mem.Write(bufPtr, graphBytes)
+	if !ok {
+		return false, nil, fmt.Errorf("failed to write graph definition to WASM memory")
+	}
+
+	ok = mem.Write(bufPtr+uint32(len(graphBytes)), inputBytes)
+	if !ok {
+		return false, nil, fmt.Errorf("failed to write input state to WASM memory")
+	}
+
+	var runFunc api.Function
+	var callRes []uint64
+
+	if entrypoint == "execute" {
+		runFunc = mod.ExportedFunction("execute")
+		if runFunc == nil {
+			return false, nil, fmt.Errorf("execute function not found in WASM VM")
+		}
+		callRes, err = runFunc.Call(executeCtx, uint64(len(graphBytes)), uint64(len(inputBytes)))
+	} else if entrypoint == "resume" {
+		runFunc = mod.ExportedFunction("resume")
+		if runFunc == nil {
+			return false, nil, fmt.Errorf("resume function not found in WASM VM")
+		}
+		taskIDOffset := uint32(len(graphBytes) + len(inputBytes))
+		ok = mem.Write(bufPtr+taskIDOffset, []byte(completedTaskID))
+		if !ok {
+			return false, nil, fmt.Errorf("failed to write completed task ID to WASM memory")
+		}
+		callRes, err = runFunc.Call(executeCtx,
+			uint64(len(graphBytes)),
+			uint64(len(inputBytes)),
+			uint64(taskIDOffset),
+			uint64(len(completedTaskID)),
+		)
+	} else {
+		return false, nil, fmt.Errorf("invalid entrypoint for RunBPMN: %s", entrypoint)
+	}
+
+	if executeCtx.Err() != nil {
+		return false, nil, executeCtx.Err()
+	}
+	if err != nil {
+		var exitErr *sys.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 0 {
+			// Success
+		} else if session.crashed {
+			return true, nil, err
+		} else {
+			return false, nil, fmt.Errorf("WASM call failed: %w", err)
+		}
+	}
+
+	if len(callRes) == 0 {
+		return false, nil, fmt.Errorf("WASM call returned no results")
+	}
+
+	resultLen := int32(callRes[0])
+	if resultLen < 0 {
+		return false, nil, fmt.Errorf("WASM core execution failed with error code: %d", resultLen)
+	}
+
+	respBytes, ok := mem.Read(bufPtr, uint32(resultLen))
+	if !ok {
+		return false, nil, fmt.Errorf("failed to read response bytes from WASM exchange buffer")
+	}
+
+	respCopy := make([]byte, len(respBytes))
+	copy(respCopy, respBytes)
+
+	return false, respCopy, nil
+}
+

@@ -11,8 +11,9 @@ import (
 
 // FileSnapshotStore implements SnapshotStore using the local file system.
 type FileSnapshotStore struct {
-	Dir string
-	mu  sync.Mutex
+	Dir         string
+	Compression bool
+	mu          sync.Mutex
 }
 
 var _ SnapshotStore = (*FileSnapshotStore)(nil)
@@ -24,7 +25,15 @@ func (f *FileSnapshotStore) Save(id string, snapshot []byte) error {
 		_ = os.MkdirAll(f.Dir, 0755)
 		path = fmt.Sprintf("%s/%s.bin", f.Dir, id)
 	}
-	return os.WriteFile(path, snapshot, 0644)
+	data := snapshot
+	if f.Compression {
+		var err error
+		data, err = compressData(snapshot)
+		if err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(path, data, 0644)
 }
 
 // Load reads a full memory snapshot from a file.
@@ -37,7 +46,7 @@ func (f *FileSnapshotStore) Load(id string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return data, nil
+	return decompressData(data)
 }
 
 func (f *FileSnapshotStore) SaveDeltas(id string, deltas map[int][]byte) error {
@@ -49,7 +58,10 @@ func (f *FileSnapshotStore) SaveDeltas(id string, deltas map[int][]byte) error {
 	current := make(map[int][]byte)
 	data, err := os.ReadFile(path)
 	if err == nil {
-		_ = json.Unmarshal(data, &current)
+		decompressed, err := decompressData(data)
+		if err == nil {
+			_ = json.Unmarshal(decompressed, &current)
+		}
 	}
 	for k, v := range deltas {
 		current[k] = v
@@ -57,6 +69,12 @@ func (f *FileSnapshotStore) SaveDeltas(id string, deltas map[int][]byte) error {
 	newData, err := json.Marshal(current)
 	if err != nil {
 		return err
+	}
+	if f.Compression {
+		newData, err = compressData(newData)
+		if err != nil {
+			return err
+		}
 	}
 	return os.WriteFile(path, newData, 0644)
 }
@@ -73,8 +91,12 @@ func (f *FileSnapshotStore) LoadDeltas(id string) (map[int][]byte, error) {
 		}
 		return nil, err
 	}
+	decompressed, err := decompressData(data)
+	if err != nil {
+		return nil, err
+	}
 	var deltas map[int][]byte
-	err = json.Unmarshal(data, &deltas)
+	err = json.Unmarshal(decompressed, &deltas)
 	return deltas, err
 }
 
@@ -96,7 +118,10 @@ func (f *FileSnapshotStore) SaveOplog(id string, callIndex int, apiName string, 
 	var list []OplogEntry
 	data, err := os.ReadFile(path)
 	if err == nil {
-		_ = json.Unmarshal(data, &list)
+		decompressed, err := decompressData(data)
+		if err == nil {
+			_ = json.Unmarshal(decompressed, &list)
+		}
 	}
 	list = append(list, OplogEntry{
 		CallIndex:       callIndex,
@@ -107,6 +132,12 @@ func (f *FileSnapshotStore) SaveOplog(id string, callIndex int, apiName string, 
 	newData, err := json.Marshal(list)
 	if err != nil {
 		return err
+	}
+	if f.Compression {
+		newData, err = compressData(newData)
+		if err != nil {
+			return err
+		}
 	}
 	return os.WriteFile(path, newData, 0644)
 }
@@ -123,8 +154,12 @@ func (f *FileSnapshotStore) LoadOplog(id string) ([]OplogEntry, error) {
 		}
 		return nil, err
 	}
+	decompressed, err := decompressData(data)
+	if err != nil {
+		return nil, err
+	}
 	var list []OplogEntry
-	err = json.Unmarshal(data, &list)
+	err = json.Unmarshal(decompressed, &list)
 	return list, err
 }
 
@@ -140,8 +175,12 @@ func (f *FileSnapshotStore) TruncateOplog(id string, beforeCallIndex int) error 
 		}
 		return err
 	}
+	decompressed, err := decompressData(data)
+	if err != nil {
+		return err
+	}
 	var list []OplogEntry
-	if err := json.Unmarshal(data, &list); err != nil {
+	if err := json.Unmarshal(decompressed, &list); err != nil {
 		return err
 	}
 	var filtered []OplogEntry
@@ -153,6 +192,12 @@ func (f *FileSnapshotStore) TruncateOplog(id string, beforeCallIndex int) error 
 	newData, err := json.Marshal(filtered)
 	if err != nil {
 		return err
+	}
+	if f.Compression {
+		newData, err = compressData(newData)
+		if err != nil {
+			return err
+		}
 	}
 	return os.WriteFile(path, newData, 0644)
 }
@@ -238,7 +283,15 @@ func (f *FileSnapshotStore) SaveWasm(hash string, wasmBytes []byte) error {
 	if _, err := os.Stat(path); err == nil {
 		return nil
 	}
-	return os.WriteFile(path, wasmBytes, 0644)
+	data := wasmBytes
+	if f.Compression {
+		var err error
+		data, err = compressData(wasmBytes)
+		if err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(path, data, 0644)
 }
 
 func (f *FileSnapshotStore) LoadWasm(hash string) ([]byte, error) {
@@ -246,7 +299,11 @@ func (f *FileSnapshotStore) LoadWasm(hash string) ([]byte, error) {
 	if f.Dir != "" {
 		path = fmt.Sprintf("%s/wasm_%s.wasm", f.Dir, hash)
 	}
-	return os.ReadFile(path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return decompressData(data)
 }
 
 // UpdateActiveIndex updates the local index file.
