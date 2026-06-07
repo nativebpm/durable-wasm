@@ -1172,7 +1172,6 @@ func TestFileSnapshotStore_Compression(t *testing.T) {
 	tempDir := t.TempDir()
 	store := &FileSnapshotStore{
 		Dir:         tempDir,
-		Compression: true,
 	}
 
 	instanceID := "test-comp-inst"
@@ -1223,16 +1222,6 @@ func TestFileSnapshotStore_Compression(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, loadedOplog, 1)
 	assert.Equal(t, "test-api", loadedOplog[0].ApiName)
-
-	// 5. Test Backwards Compatibility (reading uncompressed files)
-	uncompressedPath := filepath.Join(tempDir, "uncomp-snapshot.bin")
-	uncompressedData := []byte("uncompressed-snapshot-bytes")
-	err = os.WriteFile(uncompressedPath, uncompressedData, 0644)
-	require.NoError(t, err)
-
-	loadedUncomp, err := store.Load("uncomp-snapshot")
-	require.NoError(t, err)
-	assert.Equal(t, uncompressedData, loadedUncomp, "Must load uncompressed legacy snapshots cleanly")
 }
 
 

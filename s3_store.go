@@ -21,7 +21,6 @@ import (
 type S3SnapshotStore struct {
 	Client      *s3.Client
 	bucket      string
-	Compression bool
 }
 
 var _ SnapshotStore = (*S3SnapshotStore)(nil)
@@ -116,15 +115,11 @@ func (s *S3SnapshotStore) writeObject(key string, data []byte) (string, error) {
 // Save writes a full memory snapshot to S3.
 func (s *S3SnapshotStore) Save(id string, snapshot []byte) error {
 	key := fmt.Sprintf("instances/%s/snapshot.bin", id)
-	data := snapshot
-	if s.Compression {
-		var err error
-		data, err = compressData(snapshot)
-		if err != nil {
-			return fmt.Errorf("failed to compress snapshot for '%s': %w", id, err)
-		}
+	data, err := compressData(snapshot)
+	if err != nil {
+		return fmt.Errorf("failed to compress snapshot for '%s': %w", id, err)
 	}
-	_, err := s.writeObject(key, data)
+	_, err = s.writeObject(key, data)
 	if err != nil {
 		return fmt.Errorf("failed to save snapshot for '%s': %w", id, err)
 	}
@@ -165,11 +160,9 @@ func (s *S3SnapshotStore) SaveDeltas(id string, deltas map[int][]byte) error {
 		return fmt.Errorf("failed to marshal deltas: %w", err)
 	}
 
-	if s.Compression {
-		newData, err = compressData(newData)
-		if err != nil {
-			return fmt.Errorf("failed to compress deltas: %w", err)
-		}
+	newData, err = compressData(newData)
+	if err != nil {
+		return fmt.Errorf("failed to compress deltas: %w", err)
 	}
 
 	_, err = s.writeObject(key, newData)
@@ -243,11 +236,9 @@ func (s *S3SnapshotStore) SaveOplog(id string, callIndex int, apiName string, re
 		return fmt.Errorf("failed to marshal oplog: %w", err)
 	}
 
-	if s.Compression {
-		newData, err = compressData(newData)
-		if err != nil {
-			return fmt.Errorf("failed to compress oplog: %w", err)
-		}
+	newData, err = compressData(newData)
+	if err != nil {
+		return fmt.Errorf("failed to compress oplog: %w", err)
 	}
 
 	_, err = s.writeObject(key, newData)
@@ -314,11 +305,9 @@ func (s *S3SnapshotStore) TruncateOplog(id string, beforeCallIndex int) error {
 		return fmt.Errorf("failed to marshal truncated oplog: %w", err)
 	}
 
-	if s.Compression {
-		newData, err = compressData(newData)
-		if err != nil {
-			return fmt.Errorf("failed to compress truncated oplog: %w", err)
-		}
+	newData, err = compressData(newData)
+	if err != nil {
+		return fmt.Errorf("failed to compress truncated oplog: %w", err)
 	}
 
 	_, err = s.writeObject(key, newData)
@@ -398,15 +387,11 @@ func (s *S3SnapshotStore) LoadMetadata(id string) (*InstanceMeta, error) {
 // SaveWasm saves a WASM module binary by its SHA256 hash.
 func (s *S3SnapshotStore) SaveWasm(hash string, wasmBytes []byte) error {
 	key := fmt.Sprintf("wasm/%s.wasm", hash)
-	data := wasmBytes
-	if s.Compression {
-		var err error
-		data, err = compressData(wasmBytes)
-		if err != nil {
-			return fmt.Errorf("failed to compress WASM module %s: %w", hash, err)
-		}
+	data, err := compressData(wasmBytes)
+	if err != nil {
+		return fmt.Errorf("failed to compress WASM module %s: %w", hash, err)
 	}
-	_, err := s.writeObject(key, data)
+	_, err = s.writeObject(key, data)
 	if err != nil {
 		return fmt.Errorf("failed to save WASM module %s to S3: %w", hash, err)
 	}

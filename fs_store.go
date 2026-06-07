@@ -12,7 +12,6 @@ import (
 // FileSnapshotStore implements SnapshotStore using the local file system.
 type FileSnapshotStore struct {
 	Dir         string
-	Compression bool
 	mu          sync.Mutex
 }
 
@@ -25,13 +24,9 @@ func (f *FileSnapshotStore) Save(id string, snapshot []byte) error {
 		_ = os.MkdirAll(f.Dir, 0755)
 		path = fmt.Sprintf("%s/%s.bin", f.Dir, id)
 	}
-	data := snapshot
-	if f.Compression {
-		var err error
-		data, err = compressData(snapshot)
-		if err != nil {
-			return err
-		}
+	data, err := compressData(snapshot)
+	if err != nil {
+		return err
 	}
 	return os.WriteFile(path, data, 0644)
 }
@@ -70,11 +65,9 @@ func (f *FileSnapshotStore) SaveDeltas(id string, deltas map[int][]byte) error {
 	if err != nil {
 		return err
 	}
-	if f.Compression {
-		newData, err = compressData(newData)
-		if err != nil {
-			return err
-		}
+	newData, err = compressData(newData)
+	if err != nil {
+		return err
 	}
 	return os.WriteFile(path, newData, 0644)
 }
@@ -133,11 +126,9 @@ func (f *FileSnapshotStore) SaveOplog(id string, callIndex int, apiName string, 
 	if err != nil {
 		return err
 	}
-	if f.Compression {
-		newData, err = compressData(newData)
-		if err != nil {
-			return err
-		}
+	newData, err = compressData(newData)
+	if err != nil {
+		return err
 	}
 	return os.WriteFile(path, newData, 0644)
 }
@@ -193,11 +184,9 @@ func (f *FileSnapshotStore) TruncateOplog(id string, beforeCallIndex int) error 
 	if err != nil {
 		return err
 	}
-	if f.Compression {
-		newData, err = compressData(newData)
-		if err != nil {
-			return err
-		}
+	newData, err = compressData(newData)
+	if err != nil {
+		return err
 	}
 	return os.WriteFile(path, newData, 0644)
 }
@@ -283,13 +272,9 @@ func (f *FileSnapshotStore) SaveWasm(hash string, wasmBytes []byte) error {
 	if _, err := os.Stat(path); err == nil {
 		return nil
 	}
-	data := wasmBytes
-	if f.Compression {
-		var err error
-		data, err = compressData(wasmBytes)
-		if err != nil {
-			return err
-		}
+	data, err := compressData(wasmBytes)
+	if err != nil {
+		return err
 	}
 	return os.WriteFile(path, data, 0644)
 }

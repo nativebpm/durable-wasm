@@ -23,9 +23,6 @@ func compressData(data []byte) ([]byte, error) {
 }
 
 func decompressData(data []byte) ([]byte, error) {
-	if !isGzipped(data) {
-		return data, nil
-	}
 	r, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
