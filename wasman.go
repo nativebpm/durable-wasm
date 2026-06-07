@@ -287,6 +287,10 @@ func NewEngineWithBytes(wasmBytes []byte, store SnapshotStore, opts ...EngineOpt
 					return -1
 				}
 				defer resp.Body.Close()
+				if resp.StatusCode != http.StatusOK {
+					slog.Warn("[ENGINE] Real API call returned non-OK status", "url", url, "status", resp.Status)
+					return -1
+				}
 				response, _ = io.ReadAll(resp.Body)
 			}
 
@@ -613,6 +617,7 @@ func (e *Engine) RunBPMN(
 	graphBytes []byte,
 	inputBytes []byte, // variables (for execute) or instanceState (for resume)
 	completedTaskID string, // (for resume only)
+	serverAddr string,
 ) (bool, []byte, error) {
 	// Load or initialize metadata (WASM Module Versioning & OCC)
 	var err error
@@ -672,7 +677,7 @@ func (e *Engine) RunBPMN(
 			engine:                  e,
 			ctx:                     ctx,
 			instanceID:              instanceID,
-			serverAddr:              "",
+			serverAddr:              serverAddr,
 			shouldCrashOnCheckpoint: false,
 			meta:                    meta,
 			pageHashes:              make(map[int]uint64),
@@ -681,6 +686,7 @@ func (e *Engine) RunBPMN(
 	} else {
 		session.ctx = ctx
 		session.meta = meta
+		session.serverAddr = serverAddr
 	}
 	e.activeSessionsMu.Unlock()
 

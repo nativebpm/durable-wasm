@@ -157,16 +157,16 @@ func TestWasmVMDurableExecution(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, snapBytes)
 
+	meta2, err := store.LoadMetadata(instanceID)
+	require.NoError(t, err)
+	require.NotNil(t, meta2)
+
 	// Instantiate a fresh session/module representing recovery
 	session2 := &Session{
 		engine:     engine,
 		ctx:        ctx,
 		instanceID: instanceID,
-		meta: &InstanceMeta{
-			InstanceID: instanceID,
-			WasmHash:   engine.wasmHash,
-			Version:    0,
-		},
+		meta:       meta2,
 		pageHashes: make(map[int]uint64),
 	}
 	execCtx2 := WithSession(ctx, session2)
