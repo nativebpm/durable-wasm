@@ -57,7 +57,8 @@ func NewEngineWithBytes(wasmBytes []byte, store SnapshotStore, opts ...EngineOpt
 	}
 
 	ctx := context.Background()
-	runtime := wazero.NewRuntime(ctx)
+	runtimeConfig := wazero.NewRuntimeConfig().WithDebugInfoEnabled(false)
+	runtime := wazero.NewRuntimeWithConfig(ctx, runtimeConfig)
 
 	compiled, err := runtime.CompileModule(ctx, wasmBytes)
 	if err != nil {

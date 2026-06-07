@@ -20,10 +20,15 @@ var (
 
 // InstanceMeta holds execution metadata for safety checks and OCC.
 type InstanceMeta struct {
-	InstanceID string `json:"instance_id"`
-	WasmHash   string `json:"wasm_hash"`
-	Version    int    `json:"version"`
-	ETag       string `json:"etag,omitempty"`
+	InstanceID     string `json:"instance_id"`
+	WasmHash       string `json:"wasm_hash"`
+	Version        int    `json:"version"`
+	ETag           string `json:"etag,omitempty"`
+	ProcessID      string `json:"process_id,omitempty"`
+	DefinitionHash string `json:"definition_hash,omitempty"`
+	BusinessKey    string `json:"business_key,omitempty"`
+	BpmnState      []byte `json:"bpmn_state,omitempty"`
+	Completed      bool   `json:"completed,omitempty"`
 }
 
 // OplogEntry represents a single external call log.

@@ -156,6 +156,10 @@ func (s *MemorySnapshotStore) SaveMetadata(meta *InstanceMeta) (bool, error) {
 
 	meta.Version++
 	copied := *meta
+	if meta.BpmnState != nil {
+		copied.BpmnState = make([]byte, len(meta.BpmnState))
+		copy(copied.BpmnState, meta.BpmnState)
+	}
 	s.meta[meta.InstanceID] = &copied
 	return true, nil
 }
@@ -168,6 +172,10 @@ func (s *MemorySnapshotStore) LoadMetadata(id string) (*InstanceMeta, error) {
 		return nil, nil
 	}
 	copied := *meta
+	if meta.BpmnState != nil {
+		copied.BpmnState = make([]byte, len(meta.BpmnState))
+		copy(copied.BpmnState, meta.BpmnState)
+	}
 	return &copied, nil
 }
 
