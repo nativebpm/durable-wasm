@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net"
 	"os"
 	"testing"
 	"time"
@@ -33,6 +34,14 @@ func TestDurableWasmWorkflow_RealTemporalServer(t *testing.T) {
 	// 3. Connect to real Temporal Server
 	cfg := localTemporal.LoadFromEnv()
 	cfg.TaskQueue = "wasman-test-queue-" + uuid.New().String()
+
+	// Check if Temporal server is running before attempting to connect
+	conn, err := net.DialTimeout("tcp", cfg.HostPort, 500*time.Millisecond)
+	if err != nil {
+		t.Skipf("Skipping integration test: Temporal server is not running on %s", cfg.HostPort)
+		return
+	}
+	conn.Close()
 
 	c, err := localTemporal.NewClient(cfg)
 	require.NoError(t, err, "Temporal server must be running on %s", cfg.HostPort)

@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +17,18 @@ import (
 )
 
 func TestCamundaWasmOrchestration_RealCamundaServer(t *testing.T) {
+	// 0. Check if local Camunda Server is running
+	clientHTTP := &http.Client{Timeout: 500 * time.Millisecond}
+	respCheck, errCheck := clientHTTP.Get(camundaURL + "/engine-rest/version")
+	if errCheck != nil || respCheck.StatusCode != http.StatusOK || !strings.Contains(respCheck.Header.Get("Content-Type"), "application/json") {
+		if errCheck == nil {
+			respCheck.Body.Close()
+		}
+		t.Skipf("Skipping integration test: Camunda Server is not running on %s/engine-rest", camundaURL)
+		return
+	}
+	respCheck.Body.Close()
+
 	// 1. Cleanup files
 	_ = os.Remove(dbFile)
 	_ = os.RemoveAll("snapshots_test")
