@@ -143,6 +143,7 @@ func NewEngineWithBytes(wasmBytes []byte, store SnapshotStore, opts ...EngineOpt
 				blockSize := 4096
 				numBlocks := len(memoryBytes) / blockSize
 				deltas := make(map[int][]byte)
+				h := fnv.New64a()
 				for i := 0; i < numBlocks; i++ {
 					start := i * blockSize
 					end := start + blockSize
@@ -150,7 +151,7 @@ func NewEngineWithBytes(wasmBytes []byte, store SnapshotStore, opts ...EngineOpt
 						end = len(memoryBytes)
 					}
 					blockData := memoryBytes[start:end]
-					h := fnv.New64a()
+					h.Reset()
 					h.Write(blockData)
 					hashVal := h.Sum64()
 
@@ -331,12 +332,13 @@ func NewEngineWithBytes(wasmBytes []byte, store SnapshotStore, opts ...EngineOpt
 	}
 
 	engine := &Engine{
-		runtime:       runtime,
-		compiled:      compiled,
-		store:         store,
-		wasmHash:      wasmHash,
-		httpClient:    defaultHTTPClient,
-		compiledCache: make(map[string]wazero.CompiledModule),
+		runtime:          runtime,
+		compiled:         compiled,
+		store:            store,
+		wasmHash:         wasmHash,
+		httpClient:       defaultHTTPClient,
+		compiledCache:    make(map[string]wazero.CompiledModule),
+		activeSessions:   make(map[string]*Session),
 	}
 	engine.compiledCache[wasmHash] = compiled
 
@@ -350,6 +352,31 @@ func NewEngineWithBytes(wasmBytes []byte, store SnapshotStore, opts ...EngineOpt
 // Store returns the SnapshotStore associated with the Engine.
 func (e *Engine) Store() SnapshotStore {
 	return e.store
+}
+
+type keepAliveContextKey struct{}
+
+func WithKeepAlive(ctx context.Context) context.Context {
+	return context.WithValue(ctx, keepAliveContextKey{}, true)
+}
+
+func isKeepAlive(ctx context.Context) bool {
+	val := ctx.Value(keepAliveContextKey{})
+	return val != nil && val.(bool)
+}
+
+// CloseInstance forcefully closes any active in-memory module instance for the given ID.
+func (e *Engine) CloseInstance(ctx context.Context, instanceID string) error {
+	e.activeSessionsMu.Lock()
+	delete(e.activeSessions, instanceID)
+	e.activeSessionsMu.Unlock()
+
+	modName := fmt.Sprintf("main-%s", instanceID)
+	mod := e.runtime.Module(modName)
+	if mod != nil {
+		return mod.Close(ctx)
+	}
+	return nil
 }
 
 // Execute runs the WASM instance with a given entrypoint and session context.
@@ -444,17 +471,19 @@ func (e *Engine) ExecuteWithArgs(ctx context.Context, instanceID string, entrypo
 	}
 	defer mod.Close(executeCtx)
 
-	// Manually call _start to initialize the TinyGo runtime.
+	// Manually call _start to initialize the TinyGo/Go runtime.
 	// TinyGo's _start runs package init() + main(), then calls proc_exit(0).
 	// Our custom proc_exit only panics without closing the module, so Sys stays alive.
-	if startFunc := mod.ExportedFunction("_start"); startFunc != nil {
-		if _, err := startFunc.Call(executeCtx); err != nil {
-			var exitErr *sys.ExitError
-			if errors.As(err, &exitErr) && exitErr.ExitCode() == 0 {
-				// Expected: TinyGo _start exits with code 0 after initialization.
-				// Module is still alive because our proc_exit doesn't close it.
-			} else {
-				return false, fmt.Errorf("_start failed: %w", err)
+	if entrypoint != "_start" {
+		if startFunc := mod.ExportedFunction("_start"); startFunc != nil {
+			if _, err := startFunc.Call(executeCtx); err != nil {
+				var exitErr *sys.ExitError
+				if errors.As(err, &exitErr) && exitErr.ExitCode() == 0 {
+					// Expected: TinyGo _start exits with code 0 after initialization.
+					// Module is still alive because our proc_exit doesn't close it.
+				} else {
+					return false, fmt.Errorf("_start failed: %w", err)
+				}
 			}
 		}
 	}
@@ -490,10 +519,11 @@ func (e *Engine) ExecuteWithArgs(ctx context.Context, instanceID string, entrypo
 		// Populate base hashes from full snapshot
 		blockSize := 4096
 		numBlocks := len(memoryBytes) / blockSize
+		h := fnv.New64a()
 		for i := 0; i < numBlocks; i++ {
 			start := i * blockSize
 			end := start + blockSize
-			h := fnv.New64a()
+			h.Reset()
 			h.Write(memoryBytes[start:end])
 			session.pageHashes[i] = h.Sum64()
 		}
@@ -528,10 +558,11 @@ func (e *Engine) ExecuteWithArgs(ctx context.Context, instanceID string, entrypo
 			return false, fmt.Errorf("failed to read memory for deltas restoration")
 		}
 
+		h := fnv.New64a()
 		for idx, data := range deltas {
 			start := idx * 4096
 			copy(memoryBytes[start:start+len(data)], data)
-			h := fnv.New64a()
+			h.Reset()
 			h.Write(data)
 			session.pageHashes[idx] = h.Sum64()
 		}
@@ -540,21 +571,7 @@ func (e *Engine) ExecuteWithArgs(ctx context.Context, instanceID string, entrypo
 
 	runFunc := mod.ExportedFunction(entrypoint)
 	if runFunc == nil {
-		// Fallback to _start if the requested entrypoint is "run" but it is not exported (typical of standard Go main tasks)
-		if entrypoint == "run" {
-			runFunc = mod.ExportedFunction("_start")
-			if runFunc != nil {
-				entrypoint = "_start"
-			}
-		}
-		if runFunc == nil {
-			return false, fmt.Errorf("entrypoint function '%s' not found", entrypoint)
-		}
-	}
-
-	if entrypoint == "_start" {
-		slog.Info("[ENGINE] Entrypoint is '_start' which was executed during instantiation. Skipping redundant Call.")
-		return false, nil
+		return false, fmt.Errorf("entrypoint function '%s' not found", entrypoint)
 	}
 
 	slog.Info("[ENGINE] Invoking entrypoint", "entrypoint", entrypoint)
@@ -598,6 +615,7 @@ func (e *Engine) RunBPMN(
 	completedTaskID string, // (for resume only)
 ) (bool, []byte, error) {
 	// Load or initialize metadata (WASM Module Versioning & OCC)
+	var err error
 	meta, err := e.store.LoadMetadata(instanceID)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to load metadata: %w", err)
@@ -645,116 +663,153 @@ func (e *Engine) RunBPMN(
 		runModule = e.compiled
 	}
 
-	session := &Session{
-		engine:                  e,
-		ctx:                     ctx,
-		instanceID:              instanceID,
-		serverAddr:              "",
-		shouldCrashOnCheckpoint: false,
-		meta:                    meta,
+	keepAlive := isKeepAlive(ctx)
+
+	e.activeSessionsMu.Lock()
+	session, exists := e.activeSessions[instanceID]
+	if !exists {
+		session = &Session{
+			engine:                  e,
+			ctx:                     ctx,
+			instanceID:              instanceID,
+			serverAddr:              "",
+			shouldCrashOnCheckpoint: false,
+			meta:                    meta,
+			pageHashes:              make(map[int]uint64),
+		}
+		e.activeSessions[instanceID] = session
+	} else {
+		session.ctx = ctx
+		session.meta = meta
 	}
+	e.activeSessionsMu.Unlock()
+
+	executeCtx := WithSession(ctx, session)
+
+	var mod api.Module
+	modName := fmt.Sprintf("main-%s", instanceID)
+	existingMod := e.runtime.Module(modName)
+	alreadyInstantiated := existingMod != nil
 
 	defer func() {
 		if session.downloadResp != nil {
 			session.downloadResp.Body.Close()
 		}
+		if (!keepAlive || err != nil || session.crashed) && mod != nil {
+			mod.Close(executeCtx)
+			e.activeSessionsMu.Lock()
+			delete(e.activeSessions, instanceID)
+			e.activeSessionsMu.Unlock()
+		}
 	}()
 
-	executeCtx := WithSession(ctx, session)
+	if alreadyInstantiated {
+		mod = existingMod
+	} else {
+		config := wazero.NewModuleConfig().
+			WithName(modName).
+			WithStdout(os.Stdout).
+			WithStderr(os.Stderr).
+			WithStartFunctions()
 
-	config := wazero.NewModuleConfig().
-		WithName(fmt.Sprintf("main-%s", instanceID)).
-		WithStdout(os.Stdout).
-		WithStderr(os.Stderr).
-		WithStartFunctions()
+		var errInstantiate error
+		mod, errInstantiate = e.runtime.InstantiateModule(executeCtx, runModule, config)
+		if errInstantiate != nil {
+			slog.Error("[ENGINE] InstantiateModule failed", "error", errInstantiate)
+			e.activeSessionsMu.Lock()
+			delete(e.activeSessions, instanceID)
+			e.activeSessionsMu.Unlock()
+			return false, nil, fmt.Errorf("failed to instantiate WASM: %w", errInstantiate)
+		}
 
-	mod, err := e.runtime.InstantiateModule(executeCtx, runModule, config)
-	if err != nil {
-		slog.Error("[ENGINE] InstantiateModule failed", "error", err)
-		return false, nil, fmt.Errorf("failed to instantiate WASM: %w", err)
-	}
-	defer mod.Close(executeCtx)
-
-	if startFunc := mod.ExportedFunction("_start"); startFunc != nil {
-		if _, err := startFunc.Call(executeCtx); err != nil {
-			var exitErr *sys.ExitError
-			if errors.As(err, &exitErr) && exitErr.ExitCode() == 0 {
-				// TinyGo _start exits with code 0.
-			} else {
-				return false, nil, fmt.Errorf("_start failed: %w", err)
+		if startFunc := mod.ExportedFunction("_start"); startFunc != nil {
+			if _, err := startFunc.Call(executeCtx); err != nil {
+				var exitErr *sys.ExitError
+				if errors.As(err, &exitErr) && exitErr.ExitCode() == 0 {
+					// TinyGo _start exits with code 0.
+				} else {
+					mod.Close(executeCtx)
+					e.activeSessionsMu.Lock()
+					delete(e.activeSessions, instanceID)
+					e.activeSessionsMu.Unlock()
+					return false, nil, fmt.Errorf("_start failed: %w", err)
+				}
 			}
 		}
 	}
 
 	session.mod = mod
 	session.memory = mod.Memory()
-	session.pageHashes = make(map[int]uint64)
 
-	// Restore memory snapshot
-	snapshot, err := e.store.Load(instanceID)
-	if err == nil && len(snapshot) > 0 {
-		slog.Info("[ENGINE] Found saved full snapshot. Restoring memory...", "instance_id", instanceID)
-		currentPages, _ := session.memory.Grow(0)
-		neededPages := (uint64(len(snapshot)) + 65535) / 65536
-		if uint32(neededPages) > currentPages {
-			growPages := uint32(neededPages) - currentPages
-			_, ok := session.memory.Grow(growPages)
+	if !alreadyInstantiated {
+		// Restore memory snapshot
+		snapshot, err := e.store.Load(instanceID)
+		if err == nil && len(snapshot) > 0 {
+			slog.Info("[ENGINE] Found saved full snapshot. Restoring memory...", "instance_id", instanceID)
+			currentPages, _ := session.memory.Grow(0)
+			neededPages := (uint64(len(snapshot)) + 65535) / 65536
+			if uint32(neededPages) > currentPages {
+				growPages := uint32(neededPages) - currentPages
+				_, ok := session.memory.Grow(growPages)
+				if !ok {
+					return false, nil, fmt.Errorf("failed to grow memory for snapshot")
+				}
+			}
+
+			size := session.memory.Size()
+			memoryBytes, ok := session.memory.Read(0, size)
 			if !ok {
-				return false, nil, fmt.Errorf("failed to grow memory for snapshot")
+				return false, nil, fmt.Errorf("failed to read memory for snapshot restoration")
 			}
-		}
+			copy(memoryBytes, snapshot)
 
-		size := session.memory.Size()
-		memoryBytes, ok := session.memory.Read(0, size)
-		if !ok {
-			return false, nil, fmt.Errorf("failed to read memory for snapshot restoration")
-		}
-		copy(memoryBytes, snapshot)
-
-		blockSize := 4096
-		numBlocks := len(memoryBytes) / blockSize
-		for i := 0; i < numBlocks; i++ {
-			start := i * blockSize
-			end := start + blockSize
+			blockSize := 4096
+			numBlocks := len(memoryBytes) / blockSize
 			h := fnv.New64a()
-			h.Write(memoryBytes[start:end])
-			session.pageHashes[i] = h.Sum64()
-		}
-	}
-
-	// Apply deltas
-	deltas, err := e.store.LoadDeltas(instanceID)
-	if err == nil && len(deltas) > 0 {
-		slog.Info("[ENGINE] Found saved memory deltas. Applying to memory...", "instance_id", instanceID)
-		maxPageIndex := 0
-		for idx := range deltas {
-			if idx > maxPageIndex {
-				maxPageIndex = idx
+			for i := 0; i < numBlocks; i++ {
+				start := i * blockSize
+				end := start + blockSize
+				h.Reset()
+				h.Write(memoryBytes[start:end])
+				session.pageHashes[i] = h.Sum64()
 			}
 		}
-		neededSize := (maxPageIndex + 1) * 4096
-		neededPages := (uint64(neededSize) + 65535) / 65536
-		currentPages, _ := session.memory.Grow(0)
-		if uint32(neededPages) > currentPages {
-			growPages := uint32(neededPages) - currentPages
-			_, ok := session.memory.Grow(growPages)
+
+		// Apply deltas
+		deltas, err := e.store.LoadDeltas(instanceID)
+		if err == nil && len(deltas) > 0 {
+			slog.Info("[ENGINE] Found saved memory deltas. Applying to memory...", "instance_id", instanceID)
+			maxPageIndex := 0
+			for idx := range deltas {
+				if idx > maxPageIndex {
+					maxPageIndex = idx
+				}
+			}
+			neededSize := (maxPageIndex + 1) * 4096
+			neededPages := (uint64(neededSize) + 65535) / 65536
+			currentPages, _ := session.memory.Grow(0)
+			if uint32(neededPages) > currentPages {
+				growPages := uint32(neededPages) - currentPages
+				_, ok := session.memory.Grow(growPages)
+				if !ok {
+					return false, nil, fmt.Errorf("failed to grow memory for deltas")
+				}
+			}
+
+			size := session.memory.Size()
+			memoryBytes, ok := session.memory.Read(0, size)
 			if !ok {
-				return false, nil, fmt.Errorf("failed to grow memory for deltas")
+				return false, nil, fmt.Errorf("failed to read memory for deltas restoration")
 			}
-		}
 
-		size := session.memory.Size()
-		memoryBytes, ok := session.memory.Read(0, size)
-		if !ok {
-			return false, nil, fmt.Errorf("failed to read memory for deltas restoration")
-		}
-
-		for idx, data := range deltas {
-			start := idx * 4096
-			copy(memoryBytes[start:start+len(data)], data)
 			h := fnv.New64a()
-			h.Write(data)
-			session.pageHashes[idx] = h.Sum64()
+			for idx, data := range deltas {
+				start := idx * 4096
+				copy(memoryBytes[start:start+len(data)], data)
+				h.Reset()
+				h.Write(data)
+				session.pageHashes[idx] = h.Sum64()
+			}
 		}
 	}
 
@@ -763,9 +818,10 @@ func (e *Engine) RunBPMN(
 	if getBufPtrFunc == nil {
 		return false, nil, fmt.Errorf("get_exchange_buffer_pointer function not found in WASM VM")
 	}
-	resPtr, err := getBufPtrFunc.Call(executeCtx)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to call get_exchange_buffer_pointer: %w", err)
+	resPtr, errCall := getBufPtrFunc.Call(executeCtx)
+	if errCall != nil {
+		err = errCall
+		return false, nil, fmt.Errorf("failed to call get_exchange_buffer_pointer: %w", errCall)
 	}
 	bufPtr := uint32(resPtr[0])
 

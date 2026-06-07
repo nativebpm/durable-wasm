@@ -70,13 +70,15 @@ type SnapshotStore interface {
 
 // Engine coordinates execution, compilation, and snapshotting of WASM modules.
 type Engine struct {
-	runtime       wazero.Runtime
-	compiled      wazero.CompiledModule
-	store         SnapshotStore
-	httpClient    *http.Client
-	wasmHash      string
-	compiledCache map[string]wazero.CompiledModule
-	cacheMu       sync.RWMutex
+	runtime          wazero.Runtime
+	compiled         wazero.CompiledModule
+	store            SnapshotStore
+	httpClient       *http.Client
+	wasmHash         string
+	compiledCache    map[string]wazero.CompiledModule
+	cacheMu          sync.RWMutex
+	activeSessions   map[string]*Session
+	activeSessionsMu sync.Mutex
 }
 
 // Session tracks the dynamic execution state of a running WASM instance.

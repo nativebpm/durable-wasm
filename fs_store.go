@@ -11,14 +11,16 @@ import (
 
 // FileSnapshotStore implements SnapshotStore using the local file system.
 type FileSnapshotStore struct {
-	Dir         string
-	mu          sync.Mutex
+	Dir string
+	mu  sync.RWMutex
 }
 
 var _ SnapshotStore = (*FileSnapshotStore)(nil)
 
 // Save writes a full memory snapshot to a file.
 func (f *FileSnapshotStore) Save(id string, snapshot []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	path := fmt.Sprintf("%s.bin", id)
 	if f.Dir != "" {
 		_ = os.MkdirAll(f.Dir, 0755)
@@ -33,6 +35,8 @@ func (f *FileSnapshotStore) Save(id string, snapshot []byte) error {
 
 // Load reads a full memory snapshot from a file.
 func (f *FileSnapshotStore) Load(id string) ([]byte, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	path := fmt.Sprintf("%s.bin", id)
 	if f.Dir != "" {
 		path = fmt.Sprintf("%s/%s.bin", f.Dir, id)
@@ -45,6 +49,8 @@ func (f *FileSnapshotStore) Load(id string) ([]byte, error) {
 }
 
 func (f *FileSnapshotStore) SaveDeltas(id string, deltas map[int][]byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	path := fmt.Sprintf("%s_deltas.json", id)
 	if f.Dir != "" {
 		_ = os.MkdirAll(f.Dir, 0755)
@@ -73,6 +79,8 @@ func (f *FileSnapshotStore) SaveDeltas(id string, deltas map[int][]byte) error {
 }
 
 func (f *FileSnapshotStore) LoadDeltas(id string) (map[int][]byte, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	path := fmt.Sprintf("%s_deltas.json", id)
 	if f.Dir != "" {
 		path = fmt.Sprintf("%s/%s_deltas.json", f.Dir, id)
@@ -94,6 +102,8 @@ func (f *FileSnapshotStore) LoadDeltas(id string) (map[int][]byte, error) {
 }
 
 func (f *FileSnapshotStore) TruncateDeltas(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	path := fmt.Sprintf("%s_deltas.json", id)
 	if f.Dir != "" {
 		path = fmt.Sprintf("%s/%s_deltas.json", f.Dir, id)
@@ -103,6 +113,8 @@ func (f *FileSnapshotStore) TruncateDeltas(id string) error {
 }
 
 func (f *FileSnapshotStore) SaveOplog(id string, callIndex int, apiName string, request []byte, response []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	path := fmt.Sprintf("%s_oplog.json", id)
 	if f.Dir != "" {
 		_ = os.MkdirAll(f.Dir, 0755)
@@ -134,6 +146,8 @@ func (f *FileSnapshotStore) SaveOplog(id string, callIndex int, apiName string, 
 }
 
 func (f *FileSnapshotStore) LoadOplog(id string) ([]OplogEntry, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	path := fmt.Sprintf("%s_oplog.json", id)
 	if f.Dir != "" {
 		path = fmt.Sprintf("%s/%s_oplog.json", f.Dir, id)
@@ -155,6 +169,8 @@ func (f *FileSnapshotStore) LoadOplog(id string) ([]OplogEntry, error) {
 }
 
 func (f *FileSnapshotStore) TruncateOplog(id string, beforeCallIndex int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	path := fmt.Sprintf("%s_oplog.json", id)
 	if f.Dir != "" {
 		path = fmt.Sprintf("%s/%s_oplog.json", f.Dir, id)
@@ -192,6 +208,8 @@ func (f *FileSnapshotStore) TruncateOplog(id string, beforeCallIndex int) error 
 }
 
 func (f *FileSnapshotStore) SaveMetadata(meta *InstanceMeta) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	path := fmt.Sprintf("%s_meta.json", meta.InstanceID)
 	if f.Dir != "" {
 		_ = os.MkdirAll(f.Dir, 0755)
@@ -226,6 +244,8 @@ func (f *FileSnapshotStore) SaveMetadata(meta *InstanceMeta) (bool, error) {
 }
 
 func (f *FileSnapshotStore) LoadMetadata(id string) (*InstanceMeta, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	path := fmt.Sprintf("%s_meta.json", id)
 	if f.Dir != "" {
 		path = fmt.Sprintf("%s/%s_meta.json", f.Dir, id)
@@ -246,6 +266,8 @@ func (f *FileSnapshotStore) LoadMetadata(id string) (*InstanceMeta, error) {
 }
 
 func (f *FileSnapshotStore) Delete(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	path := fmt.Sprintf("%s.bin", id)
 	pathDeltas := fmt.Sprintf("%s_deltas.json", id)
 	pathOplog := fmt.Sprintf("%s_oplog.json", id)
@@ -264,6 +286,8 @@ func (f *FileSnapshotStore) Delete(id string) error {
 }
 
 func (f *FileSnapshotStore) SaveWasm(hash string, wasmBytes []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	path := fmt.Sprintf("wasm_%s.wasm", hash)
 	if f.Dir != "" {
 		_ = os.MkdirAll(f.Dir, 0755)
@@ -280,6 +304,8 @@ func (f *FileSnapshotStore) SaveWasm(hash string, wasmBytes []byte) error {
 }
 
 func (f *FileSnapshotStore) LoadWasm(hash string) ([]byte, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	path := fmt.Sprintf("wasm_%s.wasm", hash)
 	if f.Dir != "" {
 		path = fmt.Sprintf("%s/wasm_%s.wasm", f.Dir, hash)
@@ -338,8 +364,8 @@ func (f *FileSnapshotStore) UpdateActiveIndex(id string, info []byte, completed 
 
 // LoadActiveIndex loads the local active index file.
 func (f *FileSnapshotStore) LoadActiveIndex() ([]byte, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 
 	path := "active_index.json"
 	if f.Dir != "" {

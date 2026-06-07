@@ -1156,6 +1156,7 @@ func TestNewEngineWithBytes_SafeTask(t *testing.T) {
 	require.NoError(t, err)
 
 	crashed, err := engine.Session(instanceID).
+		WithEntrypoint("_start").
 		WithServer(serverAddr).
 		WithCrash(false).
 		Run(context.Background())
