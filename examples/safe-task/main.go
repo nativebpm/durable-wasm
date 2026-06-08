@@ -21,7 +21,7 @@ func main() {
 		if !ok {
 			return errors.New("missing variable 'item'")
 		}
-		
+
 		fmt.Printf("[SAFE TASK] Checking stock availability for: %v\n", item)
 
 		// Simple business logic: out_of_stock_item is unavailable

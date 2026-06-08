@@ -63,9 +63,6 @@ func TestCamundaWasmOrchestration_RealCamundaServer(t *testing.T) {
 	store := &wasman.FileSnapshotStore{Dir: "snapshots_test"}
 	defer os.RemoveAll("snapshots_test")
 
-	engine, err := wasman.NewEngine(wasmPath, store)
-	require.NoError(t, err)
-
 	// 6. Create Camunda Worker
 	w := camunda.NewWorker(client, nil)
 	w.SetMaxTasks(1)
@@ -88,10 +85,13 @@ func TestCamundaWasmOrchestration_RealCamundaServer(t *testing.T) {
 
 			shouldCrash := !hasSnapshot
 
-			crashed, err := engine.Session(uniqueKey).
+			crashed, err := wasman.NewTestRunner().
+				WithWasmPath(wasmPath).
+				WithStore(store).
+				WithSessionID(uniqueKey).
 				WithServer(serverAddr).
 				WithCrash(shouldCrash).
-				Run(ctx)
+				Run()
 			if err != nil {
 				if crashed {
 					slog.Info("[WORKER HANDLER] Reporting task failure to Camunda...", "task_id", task.ID)
@@ -147,4 +147,3 @@ func TestCamundaWasmOrchestration_RealCamundaServer(t *testing.T) {
 		return err != nil
 	}, 3*time.Second, 50*time.Millisecond, "Snapshot should be deleted")
 }
-

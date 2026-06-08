@@ -38,21 +38,18 @@ func main() {
 	}
 	store := &wasman.FileSnapshotStore{Dir: snapshotsDir}
 
-	engine, err := wasman.NewEngine(wasmPath, store)
-	if err != nil {
-		slog.Error("[HOST] Failed to initialize engine", "error", err)
-		os.Exit(1)
-	}
-
 	// Clear any leftover snapshot from previous runs in the database
 	_ = store.Delete(instanceID)
 
 	// 3. RUN 1: Execute with simulated crash on the first checkpoint (Step 0)
 	slog.Info("[HOST] RUN 1: Starting Gotenberg-Telegram workflow with Simulated Crash")
-	crashed, err := engine.Session(instanceID).
+	crashed, err := wasman.NewTestRunner().
+		WithWasmPath(wasmPath).
+		WithStore(store).
+		WithSessionID(instanceID).
 		WithServer(serverAddr).
 		WithCrash(true).
-		Run(context.Background())
+		Run()
 	if err != nil {
 		if crashed {
 			slog.Info("[HOST] Orchestrator successfully suspended/crashed", "error", err)
@@ -72,10 +69,13 @@ func main() {
 
 	// 4. RUN 2: Restore from checkpoint and resume execution
 	slog.Info("[HOST] RUN 2: Restoring from Snapshot and completing execution")
-	crashed, err = engine.Session(instanceID).
+	crashed, err = wasman.NewTestRunner().
+		WithWasmPath(wasmPath).
+		WithStore(store).
+		WithSessionID(instanceID).
 		WithServer(serverAddr).
 		WithCrash(false).
-		Run(context.Background())
+		Run()
 	if err != nil {
 		slog.Error("[HOST] Resumed execution failed", "error", err)
 		os.Exit(1)

@@ -61,12 +61,6 @@ func main() {
 	wasmPath := filepath.Join("..", "worker", "worker.wasm")
 	store := &wasman.FileSnapshotStore{Dir: snapshotsDir}
 
-	engine, err := wasman.NewEngine(wasmPath, store)
-	if err != nil {
-		slog.Error("[HOST] Failed to initialize WASM engine", "error", err)
-		os.Exit(1)
-	}
-
 	// 6. Create and configure Camunda Worker
 	w := camunda.NewWorker(client, nil)
 	w.SetMaxTasks(1)
@@ -94,10 +88,13 @@ func main() {
 				shouldCrash = false
 			}
 
-			crashed, err := engine.Session(businessKey).
+			crashed, err := wasman.NewTestRunner().
+				WithWasmPath(wasmPath).
+				WithStore(store).
+				WithSessionID(businessKey).
 				WithServer(serverAddr).
 				WithCrash(shouldCrash).
-				Run(ctx)
+				Run()
 			if err != nil {
 				if crashed {
 					slog.Warn("[WORKER HANDLER] WASM Engine execution suspended due to simulated crash", "error", err)

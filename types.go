@@ -6,9 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
 	"sync"
-	"time"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -114,7 +112,6 @@ type Engine struct {
 	runtime          wazero.Runtime
 	compiled         wazero.CompiledModule
 	store            SnapshotStore
-	httpClient       *http.Client
 	wasmHash         string
 	compiledCache    map[string]wazero.CompiledModule
 	cacheMu          sync.RWMutex
@@ -142,8 +139,7 @@ type Session struct {
 	uploadBuffer []byte
 
 	// Download Stream-first context
-	downloadResp *http.Response
-	downloadEOF  bool
+	downloadEOF bool
 
 	// In-memory handlers (bypassing loopback HTTP)
 	ApiHandler      func(apiName string, request []byte) ([]byte, error)
@@ -153,22 +149,5 @@ type Session struct {
 	downloadReader io.Reader
 }
 
-
-var defaultHTTPClient = &http.Client{
-	Timeout: 30 * time.Second,
-	Transport: &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
-	},
-}
-
 // EngineOption defines a configuration option for the Engine.
 type EngineOption func(*Engine)
-
-// WithHTTPClient allows configuring a custom HTTP client.
-func WithHTTPClient(client *http.Client) EngineOption {
-	return func(e *Engine) {
-		e.httpClient = client
-	}
-}

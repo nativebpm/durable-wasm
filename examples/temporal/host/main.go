@@ -12,15 +12,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/nativebpm/wasman"
 	localTemporal "github.com/nativebpm/temporal"
+	"github.com/nativebpm/wasman"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 )
-
 
 const (
 	sqliteDBFile = "snapshots.db"
@@ -58,11 +57,6 @@ func ExecuteDurableWasmActivity(ctx context.Context, instanceID string, serverAd
 	}
 	store := &wasman.FileSnapshotStore{Dir: snapshotsDir}
 
-	engine, err := wasman.NewEngine(wasmPath, store)
-	if err != nil {
-		return "", fmt.Errorf("failed to initialize engine: %w", err)
-	}
-
 	// First attempt will simulate crash, second attempt will recover
 	simulateCrash := (attempt == 1)
 	if simulateCrash {
@@ -73,10 +67,13 @@ func ExecuteDurableWasmActivity(ctx context.Context, instanceID string, serverAd
 		slog.Info("[HOST ACTIVITY] Attempt 2: Resuming WASM worker from snapshot")
 	}
 
-	crashed, err := engine.Session(instanceID).
+	crashed, err := wasman.NewTestRunner().
+		WithWasmPath(wasmPath).
+		WithStore(store).
+		WithSessionID(instanceID).
 		WithServer(serverAddr).
 		WithCrash(simulateCrash).
-		Run(ctx)
+		Run()
 	if err != nil {
 		if crashed {
 			slog.Info("[HOST ACTIVITY] WASM worker suspended/crashed as expected", "error", err)

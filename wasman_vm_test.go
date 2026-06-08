@@ -63,12 +63,12 @@ func TestWasmVMDurableExecution(t *testing.T) {
 		Name: "Simple Wait Process",
 		Nodes: map[string]GraphNode{
 			"start": {ID: "start", Type: "StartEvent", Name: "Start"},
-			"wait":  {ID: "wait",  Type: "UserTask",   Name: "User Wait Task"},
-			"end":   {ID: "end",   Type: "EndEvent",    Name: "End"},
+			"wait":  {ID: "wait", Type: "UserTask", Name: "User Wait Task"},
+			"end":   {ID: "end", Type: "EndEvent", Name: "End"},
 		},
 		Connections: []Connection{
 			{ID: "flow1", SourceRef: "start", TargetRef: "wait"},
-			{ID: "flow2", SourceRef: "wait",  TargetRef: "end"},
+			{ID: "flow2", SourceRef: "wait", TargetRef: "end"},
 		},
 		StartNodeID: "start",
 	}
@@ -213,7 +213,7 @@ func TestWasmVMDurableExecution(t *testing.T) {
 	completedTaskID := "wait"
 	taskIDOffset := uint32(len(graphBytes) + len(instanceStateBytes))
 	ok = mem2.Write(bufPtr2+taskIDOffset, []byte(completedTaskID))
-	
+
 	// Call resume(graphLen, instanceLen, taskIDPtr, taskIDLen)
 	resumeFunc := m2.ExportedFunction("resume")
 	require.NotNil(t, resumeFunc)

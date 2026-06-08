@@ -65,12 +65,12 @@ func BenchmarkWasmVM_Execute(b *testing.B) {
 		Name: "Simple Process",
 		Nodes: map[string]GraphNode{
 			"start": {ID: "start", Type: "StartEvent", Name: "Start"},
-			"wait":  {ID: "wait",  Type: "UserTask",   Name: "User Wait Task"},
-			"end":   {ID: "end",   Type: "EndEvent",    Name: "End"},
+			"wait":  {ID: "wait", Type: "UserTask", Name: "User Wait Task"},
+			"end":   {ID: "end", Type: "EndEvent", Name: "End"},
 		},
 		Connections: []Connection{
 			{ID: "flow1", SourceRef: "start", TargetRef: "wait"},
-			{ID: "flow2", SourceRef: "wait",  TargetRef: "end"},
+			{ID: "flow2", SourceRef: "wait", TargetRef: "end"},
 		},
 		StartNodeID: "start",
 	}
@@ -123,12 +123,12 @@ func BenchmarkWasmVM_ExecuteWarm(b *testing.B) {
 		Name: "Simple Process",
 		Nodes: map[string]GraphNode{
 			"start": {ID: "start", Type: "StartEvent", Name: "Start"},
-			"wait":  {ID: "wait",  Type: "UserTask",   Name: "User Wait Task"},
-			"end":   {ID: "end",   Type: "EndEvent",    Name: "End"},
+			"wait":  {ID: "wait", Type: "UserTask", Name: "User Wait Task"},
+			"end":   {ID: "end", Type: "EndEvent", Name: "End"},
 		},
 		Connections: []Connection{
 			{ID: "flow1", SourceRef: "start", TargetRef: "wait"},
-			{ID: "flow2", SourceRef: "wait",  TargetRef: "end"},
+			{ID: "flow2", SourceRef: "wait", TargetRef: "end"},
 		},
 		StartNodeID: "start",
 	}
@@ -170,4 +170,3 @@ func BenchmarkWasmVM_ExecuteWarm(b *testing.B) {
 	// Cleanup
 	_ = engine.CloseInstance(ctx, instanceID)
 }
-

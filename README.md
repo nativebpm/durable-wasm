@@ -44,15 +44,17 @@ Modern distributed architectures often require executing long-running or multi-s
 
 ## Technical Features & Architectural Design
 
-### 1. Transparent Storage Compression
+### 1. Strict Storage Compression
 Checkpointing large WebAssembly modules generates snapshots of their linear memory (typically multiples of 64KB pages). To prevent S3/disk space bloat under high throughput:
-- **Gzip Compression**: Snapshots, page deltas, and oplogs are transparently compressed using standard gzip format.
-- **Sniffing & Backwards Compatibility**: Reads dynamically check for the gzip magic bytes (`0x1f 0x8b`). If present, the data is decompressed in-flight. If absent, it reads the legacy uncompressed data, ensuring full backwards compatibility.
+- **Gzip Compression**: Snapshots, page deltas, and oplogs are transparently compressed using the standard gzip format.
+- **Strict Format Enforcement**: All reads enforce the presence of gzip compression. Raw uncompressed snapshots are not supported, ensuring consistent storage compression benefits across all process states.
 
-### 2. $O(1)$ RAM Stream-first HTTP
+
+### 2. $O(1)$ RAM Stream-first I/O
 For high-performance data processing (e.g., streaming files, large JSON/CSV payloads):
-- Data is transferred directly to/from WASM linear memory in 4KB chunks using `io.Pipe`.
+- Data is transferred directly to/from WASM linear memory in chunks using stream buffers.
 - This guarantees constant memory footprint ($O(1)$ RAM) regardless of payload size, avoiding heap exhaustion and high GC pause times.
+- All communications are executed fully in-memory via user-provided download/upload stream handlers, entirely avoiding network loopbacks and TCP port exposures.
 
 ### 3. Page-Level Delta Snapshots
 Instead of writing a full multi-megabyte memory snapshot on every single checkpoint:
@@ -87,17 +89,21 @@ Wasman guarantees durable execution by checkpointing and restoring state across 
 
 ## Directory Structure
 
-- [wasman.go](file:///Users/user/github.com/nativebpm/wasman/wasman.go): WASM compilation, runtime setup, and engine execution loops.
-- [compress.go](file:///Users/user/github.com/nativebpm/wasman/compress.go): Transparent Gzip compression utilities.
-- [fs_store.go](file:///Users/user/github.com/nativebpm/wasman/fs_store.go): Local file-system snapshot store with optional compression.
-- [s3_store.go](file:///Users/user/github.com/nativebpm/wasman/s3_store.go): S3-compatible object snapshot store with OCC.
-- [types.go](file:///Users/user/github.com/nativebpm/wasman/types.go): Common structures, interfaces, configurations, and error mappings.
-- [examples/](file:///Users/user/github.com/nativebpm/wasman/examples/):
-  - [process-csv/](file:///Users/user/github.com/nativebpm/wasman/examples/process-csv/): High-throughput CSV mapping with simulated crash recovery and $O(1)$ RAM usage.
-  - [camunda/](file:///Users/user/github.com/nativebpm/wasman/examples/camunda/): Integration with Camunda 7 External Tasks.
-  - [temporal/](file:///Users/user/github.com/nativebpm/wasman/examples/temporal/): CRM/Math activities in a simulated Temporal environment.
-  - [gotenberg-telegram/](file:///Users/user/github.com/nativebpm/wasman/examples/gotenberg-telegram/): Streaming PDF generation bot integration.
-  - [s3-store/](file:///Users/user/github.com/nativebpm/wasman/examples/s3-store/): Direct S3/MinIO snapshotting baseline demonstration.
+- [wasman.go](wasman.go): WASM compilation, runtime setup, and engine execution loops.
+- [compress.go](compress.go): Transparent Gzip compression utilities.
+- [fs_store.go](fs_store.go): Local file-system snapshot store with optional compression.
+- [s3_store.go](s3_store.go): S3-compatible object snapshot store with OCC.
+- [types.go](types.go): Common structures, interfaces, configurations, and error mappings.
+- [examples/](examples/):
+  - [process-csv/](examples/process-csv/): High-throughput CSV mapping with simulated crash recovery and $O(1)$ RAM usage.
+  - [camunda/](examples/camunda/): Integration with Camunda 7 External Tasks.
+  - [temporal/](examples/temporal/): CRM/Math activities in a simulated Temporal environment.
+  - [gotenberg-telegram/](examples/gotenberg-telegram/): Streaming PDF generation bot integration.
+  - [s3-store/](examples/s3-store/): Direct S3/MinIO snapshotting baseline demonstration.
+  - [in-memory-channel/](examples/in-memory-channel/): Purely in-memory host-guest stream data exchange bypassing TCP loopbacks entirely.
+  - [safe-task/](examples/safe-task/): Execution of sandboxed tasks utilizing the safe, high-level RunTask runner utility.
+  - [wasm-inspector/](examples/wasm-inspector/): Low-level WebAssembly inspect utility executing guest WASM binaries under customized WASI settings.
+
 
 ---
 
@@ -140,27 +146,31 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
-
 	// 1. Initialize snapshot store with compression enabled
 	store := &wasman.FileSnapshotStore{
 		Dir:         "snapshots",
 		Compression: true,
 	}
 
-	// 2. Load and compile the WASM module
-	engine, err := wasman.NewEngine("worker.wasm", store)
-	if err != nil {
-		panic(err)
+	// 2. Define stream handlers
+	downloadHandler := func() ([]byte, error) {
+		return []byte("my input data stream"), nil
+	}
+	uploadHandler := func(payload []byte) error {
+		fmt.Printf("Received output payload: %s\n", string(payload))
+		return nil
 	}
 
-	// 3. Execute session.
+	// 3. Execute session using the high-level Fluent Runner API.
 	// If a snapshot exists under this session ID, memory is restored automatically.
-	crashed, err := engine.Session("my-session-id").
+	crashed, err := wasman.NewRunner().
+		WithWasmPath("worker.wasm").
+		WithStore(store).
+		WithSessionID("my-session-id").
 		WithEntrypoint("run").
-		WithServer("localhost:8080").
-		WithCrash(false).
-		Run(ctx)
+		WithDownloadHandler(downloadHandler).
+		WithUploadHandler(uploadHandler).
+		Run()
 
 	if err != nil {
 		if crashed {
@@ -173,3 +183,8 @@ func main() {
 	}
 }
 ```
+
+## Performance & Benchmarks
+
+Detailed CPU and memory benchmark profiles (including a comparison of cold starts vs. warm resume performance) are available in the [Benchmarks & Profiling Profile](docs/benchmarks.md) document.
+

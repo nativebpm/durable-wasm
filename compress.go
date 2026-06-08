@@ -61,4 +61,3 @@ func decompressData(data []byte) ([]byte, error) {
 func isGzipped(data []byte) bool {
 	return len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b
 }
-

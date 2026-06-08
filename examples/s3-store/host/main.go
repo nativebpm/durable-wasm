@@ -81,19 +81,15 @@ func main() {
 	// Clear any leftover snapshot from previous runs
 	_ = store.Delete(instanceID)
 
-	engine, err := wasman.NewEngine(wasmPath, store)
-	if err != nil {
-		slog.Error("[HOST] Failed to initialize engine", "error", err)
-		slog.Error("[HOST] Make sure worker.wasm is compiled by running 'make build-worker'")
-		os.Exit(1)
-	}
-
 	// 6. RUN 1: Execute with simulated crash on the first checkpoint
 	slog.Info("[HOST] RUN 1: Executing WASM from scratch with simulated crash")
-		crashed, err := engine.Session(instanceID).
+	crashed, err := wasman.NewTestRunner().
+		WithWasmPath(wasmPath).
+		WithStore(store).
+		WithSessionID(instanceID).
 		WithServer(serverAddr).
 		WithCrash(true).
-		Run(ctx)
+		Run()
 	if err != nil {
 		if crashed {
 			slog.Info("[HOST] Execution successfully suspended/crashed", "error", err)
@@ -113,10 +109,13 @@ func main() {
 
 	// 7. RUN 2: Restore from checkpoint and resume execution
 	slog.Info("[HOST] RUN 2: Restoring from S3 snapshot and completing execution")
-	crashed, err = engine.Session(instanceID).
+	crashed, err = wasman.NewTestRunner().
+		WithWasmPath(wasmPath).
+		WithStore(store).
+		WithSessionID(instanceID).
 		WithServer(serverAddr).
 		WithCrash(false).
-		Run(ctx)
+		Run()
 	if err != nil {
 		slog.Error("[HOST] Resumed execution failed", "error", err)
 		os.Exit(1)

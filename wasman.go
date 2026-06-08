@@ -9,9 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -281,27 +279,8 @@ func NewEngineWithBytes(wasmBytes []byte, store SnapshotStore, opts ...EngineOpt
 				time.Sleep(10 * time.Millisecond)
 				response = []byte(fmt.Sprintf("resp_for_%s_call_%d", string(request), callIdx))
 			} else {
-				if s.serverAddr == "" {
-					return -1
-				}
-				url := fmt.Sprintf("http://%s/%s", s.serverAddr, apiName)
-				req, err := http.NewRequestWithContext(s.ctx, "POST", url, strings.NewReader(string(request)))
-				if err != nil {
-					slog.Error("[ENGINE] Failed to create HTTP request", "url", url, "error", err)
-					return -1
-				}
-				req.Header.Set("Content-Type", "application/octet-stream")
-				resp, err := s.engine.httpClient.Do(req)
-				if err != nil {
-					slog.Error("[ENGINE] Real API call failed", "url", url, "error", err)
-					return -1
-				}
-				defer resp.Body.Close()
-				if resp.StatusCode != http.StatusOK {
-					slog.Warn("[ENGINE] Real API call returned non-OK status", "url", url, "status", resp.Status)
-					return -1
-				}
-				response, _ = io.ReadAll(resp.Body)
+				slog.Error("[ENGINE] No in-memory ApiHandler configured for host call", "api", apiName)
+				return -1
 			}
 
 			// Save response to Oplog
@@ -346,13 +325,12 @@ func NewEngineWithBytes(wasmBytes []byte, store SnapshotStore, opts ...EngineOpt
 	}
 
 	engine := &Engine{
-		runtime:          runtime,
-		compiled:         compiled,
-		store:            store,
-		wasmHash:         wasmHash,
-		httpClient:       defaultHTTPClient,
-		compiledCache:    make(map[string]wazero.CompiledModule),
-		activeSessions:   make(map[string]*Session),
+		runtime:        runtime,
+		compiled:       compiled,
+		store:          store,
+		wasmHash:       wasmHash,
+		compiledCache:  make(map[string]wazero.CompiledModule),
+		activeSessions: make(map[string]*Session),
 	}
 	engine.compiledCache[wasmHash] = compiled
 
@@ -460,13 +438,6 @@ func (e *Engine) ExecuteWithArgs(ctx context.Context, instanceID string, entrypo
 		DownloadHandler:         getDownloadHandler(ctx),
 		UploadHandler:           getUploadHandler(ctx),
 	}
-
-	// Guarantee cleanup of HTTP connections and pipes on return
-	defer func() {
-		if session.downloadResp != nil {
-			session.downloadResp.Body.Close()
-		}
-	}()
 
 	// Bind session to context
 	executeCtx := WithSession(ctx, session)
@@ -717,9 +688,6 @@ func (e *Engine) RunBPMN(
 	alreadyInstantiated := existingMod != nil
 
 	defer func() {
-		if session.downloadResp != nil {
-			session.downloadResp.Body.Close()
-		}
 		if (!keepAlive || err != nil || session.crashed) && mod != nil {
 			mod.Close(executeCtx)
 			e.activeSessionsMu.Lock()
@@ -928,4 +896,3 @@ func (e *Engine) RunBPMN(
 
 	return false, respCopy, nil
 }
-

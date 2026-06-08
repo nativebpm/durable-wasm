@@ -1,10 +1,6 @@
 package main
 
 import (
-	"context"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"sync/atomic"
 	"testing"
@@ -15,55 +11,30 @@ import (
 )
 
 func TestGotenbergTelegramPipeline_Success_With_Retry(t *testing.T) {
-
-
-	// 2. Start mock REST API services using httptest
+	// 2. Mock state in-memory
 	var downloadCount int32
 	var uploadCount int32
 
 	var receivedDocxBytes []byte
 	var receivedPdfBytes []byte
 
-	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/download" {
-			count := atomic.AddInt32(&downloadCount, 1)
-			w.WriteHeader(http.StatusOK)
-
-			if count == 1 {
-				w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-				_, _ = w.Write([]byte("[MOCK DOCX INVOICE FILE CONTENTS]"))
-			} else {
-				w.Header().Set("Content-Type", "application/pdf")
-				_, _ = w.Write([]byte("[MOCK GENERATED PDF INVOICE CONTENTS]"))
-			}
-			return
+	downloadHandler := func() ([]byte, error) {
+		count := atomic.AddInt32(&downloadCount, 1)
+		if count == 1 {
+			return []byte("[MOCK DOCX INVOICE FILE CONTENTS]"), nil
 		}
+		return []byte("[MOCK GENERATED PDF INVOICE CONTENTS]"), nil
+	}
 
-		if r.URL.Path == "/upload" {
-			count := atomic.AddInt32(&uploadCount, 1)
-			w.WriteHeader(http.StatusOK)
-
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-
-			if count == 1 {
-				receivedDocxBytes = body
-			} else {
-				receivedPdfBytes = body
-			}
-			_, _ = w.Write([]byte(`{"status":"OK"}`))
-			return
+	uploadHandler := func(payload []byte) error {
+		count := atomic.AddInt32(&uploadCount, 1)
+		if count == 1 {
+			receivedDocxBytes = payload
+		} else {
+			receivedPdfBytes = payload
 		}
-
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer testServer.Close()
-
-	// Extract host and port from test server URL
-	srvAddr := testServer.Listener.Addr().String()
+		return nil
+	}
 
 	// 3. Initialize File Snapshot Store
 	_ = os.RemoveAll("snapshots_test")
@@ -74,14 +45,16 @@ func TestGotenbergTelegramPipeline_Success_With_Retry(t *testing.T) {
 
 	// 4. Initialize Durable WASM Engine
 	wasmPath := "../worker/worker.wasm"
-	engine, err := wasman.NewEngine(wasmPath, store)
-	require.NoError(t, err)
 
 	// 5. RUN 1: Execute with simulated crash
-	crashed, err := engine.Session(instanceID).
-		WithServer(srvAddr).
+	crashed, err := wasman.NewTestRunner().
+		WithWasmPath(wasmPath).
+		WithStore(store).
+		WithSessionID(instanceID).
+		WithDownloadHandler(downloadHandler).
+		WithUploadHandler(uploadHandler).
 		WithCrash(true).
-		Run(context.Background())
+		Run()
 	require.Error(t, err)
 	assert.True(t, crashed, "First run should crash")
 
@@ -91,10 +64,14 @@ func TestGotenbergTelegramPipeline_Success_With_Retry(t *testing.T) {
 	assert.NotEmpty(t, snapshot)
 
 	// 6. RUN 2: Restore from snapshot
-	crashed, err = engine.Session(instanceID).
-		WithServer(srvAddr).
+	crashed, err = wasman.NewTestRunner().
+		WithWasmPath(wasmPath).
+		WithStore(store).
+		WithSessionID(instanceID).
+		WithDownloadHandler(downloadHandler).
+		WithUploadHandler(uploadHandler).
 		WithCrash(false).
-		Run(context.Background())
+		Run()
 	require.NoError(t, err)
 	assert.False(t, crashed)
 

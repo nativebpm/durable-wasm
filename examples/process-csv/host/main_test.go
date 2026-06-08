@@ -1,10 +1,6 @@
 package main
 
 import (
-	"context"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"testing"
 
@@ -13,51 +9,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
 func TestCSVProcessPipeline_Success_With_Retry(t *testing.T) {
-
-
-	// 2. Start mock REST API services using httptest
+	// 2. Mock state in-memory
 	var receivedBytes []byte
 	var uploadCalled bool
 
-	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		if r.URL.Path == "/download" {
-			w.Header().Set("Content-Type", "text/csv")
-			w.WriteHeader(http.StatusOK)
-			csvData := `id,name,email,amount
+	downloadHandler := func() ([]byte, error) {
+		csvData := `id,name,email,amount
 1,Alice Johnson,alice@example.com,120.50
 2,Bob Smith,bob-invalid-email,250.00
 3,Charlie Brown,charlie@example.com,invalid_amount_field
 4,David Miller,david@example.com,450.00
 5,Eve Adams,eve@example.com,90.25
 `
-			_, _ = w.Write([]byte(csvData))
-			return
-		}
+		return []byte(csvData), nil
+	}
 
-		if r.URL.Path == "/upload" {
-			uploadCalled = true
-			var err error
-			receivedBytes, err = io.ReadAll(r.Body)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"status":"OK"}`))
-			return
-		}
-
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer testServer.Close()
-
-	// Extract host and port from test server URL
-	// E.g., http://127.0.0.1:51234 -> 127.0.0.1:51234
-	srvAddr := testServer.Listener.Addr().String()
+	uploadHandler := func(payload []byte) error {
+		uploadCalled = true
+		receivedBytes = payload
+		return nil
+	}
 
 	// 3. Initialize File Snapshot Store
 	_ = os.RemoveAll("snapshots_test")
@@ -68,14 +40,16 @@ func TestCSVProcessPipeline_Success_With_Retry(t *testing.T) {
 
 	// 4. Initialize Durable WASM Engine
 	wasmPath := "../worker/worker.wasm"
-	engine, err := wasman.NewEngine(wasmPath, store)
-	require.NoError(t, err)
 
 	// 5. RUN 1: Execute with simulated crash
-	crashed, err := engine.Session(instanceID).
-		WithServer(srvAddr).
+	crashed, err := wasman.NewTestRunner().
+		WithWasmPath(wasmPath).
+		WithStore(store).
+		WithSessionID(instanceID).
+		WithDownloadHandler(downloadHandler).
+		WithUploadHandler(uploadHandler).
 		WithCrash(true).
-		Run(context.Background())
+		Run()
 	require.Error(t, err)
 	assert.True(t, crashed, "First run should crash")
 
@@ -85,10 +59,14 @@ func TestCSVProcessPipeline_Success_With_Retry(t *testing.T) {
 	assert.NotEmpty(t, snapshot)
 
 	// 6. RUN 2: Restore from snapshot
-	crashed, err = engine.Session(instanceID).
-		WithServer(srvAddr).
+	crashed, err = wasman.NewTestRunner().
+		WithWasmPath(wasmPath).
+		WithStore(store).
+		WithSessionID(instanceID).
+		WithDownloadHandler(downloadHandler).
+		WithUploadHandler(uploadHandler).
 		WithCrash(false).
-		Run(context.Background())
+		Run()
 	require.NoError(t, err)
 	assert.False(t, crashed)
 
@@ -101,8 +79,7 @@ func TestCSVProcessPipeline_Success_With_Retry(t *testing.T) {
 	assert.Contains(t, resultStr, `"name":"David Miller"`)
 	assert.Contains(t, resultStr, `"name":"Eve Adams"`)
 
-	// Check that snapshot was deleted in final main.go logic?
-	// The host/main.go deletes it manually at the end. Let's do it too
+	// Check that snapshot was deleted
 	_ = store.Delete(instanceID)
 	_, err = store.Load(instanceID)
 	assert.Error(t, err)

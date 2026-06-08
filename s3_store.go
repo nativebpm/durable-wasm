@@ -19,8 +19,8 @@ import (
 
 // S3SnapshotStore implements SnapshotStore using an S3-compatible object store.
 type S3SnapshotStore struct {
-	Client      *s3.Client
-	bucket      string
+	Client *s3.Client
+	bucket string
 }
 
 var _ SnapshotStore = (*S3SnapshotStore)(nil)

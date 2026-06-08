@@ -44,15 +44,17 @@
 
 ## Архитектурные особенности и технологии
 
-### 1. Прозрачное сжатие данных (Gzip)
+### 1. Обязательное сжатие данных (Gzip)
 Создание снимков памяти WASM-модулей генерирует дампы линейной памяти (кратно страницам по 64 КБ). Для оптимизации дискового пространства и трафика:
 - **Gzip-сжатие**: Все снимки памяти, постраничные дельты изменений и логи oplog автоматически сжимаются на лету с использованием gzip.
-- **Обратная совместимость**: При чтении движок проверяет сигнатуру данных на наличие магических байт gzip (`0x1f 0x8b`). Если они найдены, происходит автоматическая распаковка; если нет — данные считываются в исходном несжатом виде. Это гарантирует плавную миграцию с legacy-снимков.
+- **Строгий формат**: Чтение данных требует обязательного наличия gzip-сжатия. Несжатые сырые снимки не поддерживаются, что гарантирует максимальную эффективность хранения для всех состояний процессов.
 
-### 2. Стриминг с $O(1)$ RAM
+
+### 2. Стриминг в памяти с $O(1)$ RAM
 При передаче больших объемов данных (файлов, тяжелых JSON/CSV):
-- Данные записываются и считываются из памяти WASM блоками по 4 КБ через механизм `io.Pipe`.
+- Данные записываются и считываются из памяти WASM блоками через буферы потоков.
 - Это гарантирует фиксированное и минимальное потребление RAM ($O(1)$) вне зависимости от размера обрабатываемых файлов, исключая перегрузку сборщика мусора (GC) и утечки памяти.
+- Все взаимодействия происходят полностью в оперативной памяти через переданные Go-обработчики (handlers), полностью избавляя от необходимости локальных HTTP-вызовов и открытия сетевых портов.
 
 ### 3. Постраничные дельты памяти (Delta Snapshots)
 Вместо записи полного многомегабайтного снимка памяти при каждом сохранении:
@@ -87,17 +89,21 @@ Wasman гарантирует надежное восстановление со
 
 ## Структура каталогов
 
-- [wasman.go](file:///Users/user/github.com/nativebpm/wasman/wasman.go): Инициализация, компиляция и основной цикл выполнения WASM.
-- [compress.go](file:///Users/user/github.com/nativebpm/wasman/compress.go): Вспомогательные утилиты для прозрачного gzip-сжатия.
-- [fs_store.go](file:///Users/user/github.com/nativebpm/wasman/fs_store.go): Файловое хранилище снимков с поддержкой сжатия.
-- [s3_store.go](file:///Users/user/github.com/nativebpm/wasman/s3_store.go): Хранилище снимков в S3 с поддержкой сжатия и OCC.
-- [types.go](file:///Users/user/github.com/nativebpm/wasman/types.go): Базовые интерфейсы, структуры и ошибки.
-- [examples/](file:///Users/user/github.com/nativebpm/wasman/examples/): Примеры интеграций:
-  - [process-csv/](file:///Users/user/github.com/nativebpm/wasman/examples/process-csv/): Стриминг и парсинг CSV с эмуляцией сбоя и восстановлением.
-  - [camunda/](file:///Users/user/github.com/nativebpm/wasman/examples/camunda/): Воркер для интеграции с внешними задачами Camunda 7.
-  - [temporal/](file:///Users/user/github.com/nativebpm/wasman/examples/temporal/): CRM/CRM-операции с чекпоинтами в Temporal.
-  - [gotenberg-telegram/](file:///Users/user/github.com/nativebpm/wasman/examples/gotenberg-telegram/): Потоковый бот конвертации файлов в PDF.
-  - [s3-store/](file:///Users/user/github.com/nativebpm/wasman/examples/s3-store/): Демонстрация сохранения снимков напрямую в S3/MinIO.
+- [wasman.go](wasman.go): Инициализация, компиляция и основной цикл выполнения WASM.
+- [compress.go](compress.go): Вспомогательные утилиты для прозрачного gzip-сжатия.
+- [fs_store.go](fs_store.go): Файловое хранилище снимков с поддержкой сжатия.
+- [s3_store.go](s3_store.go): Хранилище снимков в S3 с поддержкой сжатия и OCC.
+- [types.go](types.go): Базовые интерфейсы, структуры и ошибки.
+- [examples/](examples/): Примеры интеграций:
+  - [process-csv/](examples/process-csv/): Стриминг и парсинг CSV с эмуляцией сбоя и восстановлением.
+  - [camunda/](examples/camunda/): Воркер для интеграции с внешними задачами Camunda 7.
+  - [temporal/](examples/temporal/): CRM/CRM-операции с чекпоинтами в Temporal.
+  - [gotenberg-telegram/](examples/gotenberg-telegram/): Потоковый бот конвертации файлов в PDF.
+  - [s3-store/](examples/s3-store/): Демонстрация сохранения снимков напрямую в S3/MinIO.
+  - [in-memory-channel/](examples/in-memory-channel/): Исключительно внутрипамятый потоковый обмен данными между хостом и WASM-гостем, полностью исключающий сетевые вызовы по TCP loopback.
+  - [safe-task/](examples/safe-task/): Выполнение изолированных задач с использованием высокоуровневой и безопасной утилиты-раннера RunTask.
+  - [wasm-inspector/](examples/wasm-inspector/): Низкоуровневая утилита для инспекции и запуска гостевых WASM-модулей с настраиваемыми параметрами WASI.
+
 
 ---
 
@@ -139,27 +145,31 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
-
 	// 1. Инициализируем хранилище со включенным сжатием
 	store := &wasman.FileSnapshotStore{
 		Dir:         "snapshots",
 		Compression: true,
 	}
 
-	// 2. Компилируем WASM-модуль
-	engine, err := wasman.NewEngine("worker.wasm", store)
-	if err != nil {
-		panic(err)
+	// 2. Определяем обработчики стриминга в памяти
+	downloadHandler := func() ([]byte, error) {
+		return []byte("my input data stream"), nil
+	}
+	uploadHandler := func(payload []byte) error {
+		fmt.Printf("Получены выходные данные: %s\n", string(payload))
+		return nil
 	}
 
-	// 3. Запускаем сессию.
+	// 3. Запускаем сессию с использованием высокоуровневого Fluent Runner API.
 	// Если снимок для "my-session-id" существует, память восстановится автоматически.
-	crashed, err := engine.Session("my-session-id").
+	crashed, err := wasman.NewRunner().
+		WithWasmPath("worker.wasm").
+		WithStore(store).
+		WithSessionID("my-session-id").
 		WithEntrypoint("run").
-		WithServer("localhost:8080").
-		WithCrash(false).
-		Run(ctx)
+		WithDownloadHandler(downloadHandler).
+		WithUploadHandler(uploadHandler).
+		Run()
 
 	if err != nil {
 		if crashed {
@@ -172,3 +182,8 @@ func main() {
 	}
 }
 ```
+
+## Производительность и бенчмарки
+
+Подробные профили тестирования производительности CPU и памяти (включая сравнение холодного старта и горячего выполнения шагов) задокументированы в файле [Benchmarks & Profiling Profile](docs/benchmarks.md).
+
