@@ -29,35 +29,51 @@ func (s *Session) handleDownload(ptr int32, length int32) int32 {
 		return -1
 	}
 
-	if s.downloadResp == nil {
-		url := fmt.Sprintf("http://%s/download", s.serverAddr)
-		slog.Info("[ENGINE] GET Request (Stream-first)", "url", url)
-		resp, err := httpstream.NewRequest(s.ctx, *s.engine.httpClient, "GET", url).Send()
-		if err != nil {
-			slog.Error("[ENGINE] GET failed", "error", err)
-			return -1
+	if s.downloadReader == nil {
+		if s.DownloadHandler != nil {
+			data, err := s.DownloadHandler()
+			if err != nil {
+				slog.Error("[ENGINE] In-memory download handler failed", "error", err)
+				return -1
+			}
+			s.downloadReader = bytes.NewReader(data)
+		} else {
+			url := fmt.Sprintf("http://%s/download", s.serverAddr)
+			slog.Info("[ENGINE] GET Request (Stream-first)", "url", url)
+			resp, err := httpstream.NewRequest(s.ctx, *s.engine.httpClient, "GET", url).Send()
+			if err != nil {
+				slog.Error("[ENGINE] GET failed", "error", err)
+				return -1
+			}
+			s.downloadResp = resp
+			s.downloadReader = resp.Body
 		}
-		s.downloadResp = resp
 	}
 
 	buf := make([]byte, length)
-	n, err := s.downloadResp.Body.Read(buf)
+	n, err := s.downloadReader.Read(buf)
 	if n > 0 {
 		s.memory.Write(uint32(ptr), buf[:n])
 	}
 
 	if err == io.EOF {
-		slog.Info("[ENGINE] GET Stream EOF. Closing response")
-		s.downloadResp.Body.Close()
-		s.downloadResp = nil
+		slog.Info("[ENGINE] GET Stream EOF. Closing download stream")
+		if s.downloadResp != nil {
+			s.downloadResp.Body.Close()
+			s.downloadResp = nil
+		}
+		s.downloadReader = nil
 		s.downloadEOF = true
 		return int32(n)
 	}
 
 	if err != nil {
 		slog.Error("[ENGINE] Read failed", "error", err)
-		s.downloadResp.Body.Close()
-		s.downloadResp = nil
+		if s.downloadResp != nil {
+			s.downloadResp.Body.Close()
+			s.downloadResp = nil
+		}
+		s.downloadReader = nil
 		return -1
 	}
 
@@ -83,6 +99,20 @@ func (s *Session) handleUpload(ptr int32, length int32) int32 {
 			return 0
 		}
 
+		if s.UploadHandler != nil {
+			err := s.UploadHandler(s.uploadBuffer)
+			s.uploadBuffer = nil
+			s.downloadResp = nil
+			s.downloadReader = nil
+			s.downloadEOF = false
+			if err != nil {
+				slog.Error("[ENGINE] In-memory upload handler failed", "error", err)
+				return -1
+			}
+			slog.Info("[ENGINE] In-memory upload completed successfully")
+			return 0
+		}
+
 		url := fmt.Sprintf("http://%s/upload", s.serverAddr)
 		slog.Info("[ENGINE] POST Request (Synchronous at EOF)", "url", url, "size", len(s.uploadBuffer))
 
@@ -94,6 +124,7 @@ func (s *Session) handleUpload(ptr int32, length int32) int32 {
 
 		// Reset download stream state to allow next download requests
 		s.downloadResp = nil
+		s.downloadReader = nil
 		s.downloadEOF = false
 
 		if err != nil {

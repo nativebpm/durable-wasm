@@ -8,12 +8,15 @@ import (
 
 // Execution represents a fluent builder for configuring and running a WASM execution session.
 type Execution struct {
-	engine      *Engine
-	instanceID  string
-	entrypoint  string
-	serverAddr  string
-	shouldCrash bool
-	params      []uint64
+	engine          *Engine
+	instanceID      string
+	entrypoint      string
+	serverAddr      string
+	shouldCrash     bool
+	params          []uint64
+	apiHandler      func(apiName string, request []byte) ([]byte, error)
+	downloadHandler func() ([]byte, error)
+	uploadHandler   func(payload []byte) error
 }
 
 // Session creates a new Execution builder for the specified WASM instance.
@@ -49,7 +52,36 @@ func (ex *Execution) WithArgs(params ...uint64) *Execution {
 	return ex
 }
 
+// WithApiHandler configures an in-memory API handler to bypass loopback HTTP calls.
+func (ex *Execution) WithApiHandler(h func(apiName string, request []byte) ([]byte, error)) *Execution {
+	ex.apiHandler = h
+	return ex
+}
+
+// WithDownloadHandler configures an in-memory stream download handler to bypass loopback HTTP calls.
+func (ex *Execution) WithDownloadHandler(h func() ([]byte, error)) *Execution {
+	ex.downloadHandler = h
+	return ex
+}
+
+// WithUploadHandler configures an in-memory stream upload handler to bypass loopback HTTP calls.
+func (ex *Execution) WithUploadHandler(h func(payload []byte) error) *Execution {
+	ex.uploadHandler = h
+	return ex
+}
+
 // Run executes the WASM instance with the configured session options.
 func (ex *Execution) Run(ctx context.Context) (crashed bool, err error) {
-	return ex.engine.ExecuteWithArgs(ctx, ex.instanceID, ex.entrypoint, ex.serverAddr, ex.shouldCrash, ex.params...)
+	runCtx := ctx
+	if ex.apiHandler != nil {
+		runCtx = WithApiHandler(runCtx, ex.apiHandler)
+	}
+	if ex.downloadHandler != nil {
+		runCtx = WithDownloadHandler(runCtx, ex.downloadHandler)
+	}
+	if ex.uploadHandler != nil {
+		runCtx = WithUploadHandler(runCtx, ex.uploadHandler)
+	}
+	return ex.engine.ExecuteWithArgs(runCtx, ex.instanceID, ex.entrypoint, ex.serverAddr, ex.shouldCrash, ex.params...)
 }
+

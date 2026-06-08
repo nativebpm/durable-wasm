@@ -267,7 +267,17 @@ func NewEngineWithBytes(wasmBytes []byte, store SnapshotStore, opts ...EngineOpt
 			slog.Info("[ENGINE] Oplog Execution: invoking real API call", "api", apiName, "call_index", callIdx)
 			var response []byte
 
-			if apiName == "test_api" {
+			if s.ApiHandler != nil {
+				var err error
+				response, err = s.ApiHandler(apiName, request)
+				if err != nil {
+					slog.Warn("[ENGINE] In-memory ApiHandler call failed", "api", apiName, "error", err)
+					return -1
+				}
+				if response == nil {
+					return -1
+				}
+			} else if apiName == "test_api" {
 				time.Sleep(10 * time.Millisecond)
 				response = []byte(fmt.Sprintf("resp_for_%s_call_%d", string(request), callIdx))
 			} else {
@@ -446,6 +456,9 @@ func (e *Engine) ExecuteWithArgs(ctx context.Context, instanceID string, entrypo
 		serverAddr:              serverAddr,
 		shouldCrashOnCheckpoint: shouldCrash,
 		meta:                    meta,
+		ApiHandler:              getApiHandler(ctx),
+		DownloadHandler:         getDownloadHandler(ctx),
+		UploadHandler:           getUploadHandler(ctx),
 	}
 
 	// Guarantee cleanup of HTTP connections and pipes on return
@@ -681,12 +694,18 @@ func (e *Engine) RunBPMN(
 			shouldCrashOnCheckpoint: false,
 			meta:                    meta,
 			pageHashes:              make(map[int]uint64),
+			ApiHandler:              getApiHandler(ctx),
+			DownloadHandler:         getDownloadHandler(ctx),
+			UploadHandler:           getUploadHandler(ctx),
 		}
 		e.activeSessions[instanceID] = session
 	} else {
 		session.ctx = ctx
 		session.meta = meta
 		session.serverAddr = serverAddr
+		session.ApiHandler = getApiHandler(ctx)
+		session.DownloadHandler = getDownloadHandler(ctx)
+		session.UploadHandler = getUploadHandler(ctx)
 	}
 	e.activeSessionsMu.Unlock()
 
