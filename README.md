@@ -186,5 +186,5 @@ func main() {
 
 ## Performance & Benchmarks
 
-Detailed CPU and memory benchmark profiles (including a comparison of cold starts vs. warm resume performance) are available in the [Benchmarks & Profiling Profile](docs/benchmarks.md) document.
+Detailed CPU and memory benchmark profiles (focusing on the optimized warm resume JIT execution performance of ~38 µs) are available in the [Benchmarks & Profiling Profile](docs/benchmarks.md) document.
 

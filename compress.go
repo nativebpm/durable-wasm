@@ -33,6 +33,7 @@ func compressData(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	zw.Reset(io.Discard) // Detach from buf to prevent memory retention
 	gzipWriterPool.Put(zw)
 	return buf.Bytes(), nil
 }
@@ -53,6 +54,7 @@ func decompressData(data []byte) ([]byte, error) {
 	}
 	defer func() {
 		_ = zr.Close()
+		_ = zr.Reset(bytes.NewReader(nil)) // Detach from input reader to prevent memory retention
 		gzipReaderPool.Put(zr)
 	}()
 	return io.ReadAll(zr)
